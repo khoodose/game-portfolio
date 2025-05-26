@@ -1,0 +1,3452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chicken Shooter</title>
+    <style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #222;
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: none;
+}
+
+#game-container {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background-color: #222;
+}
+
+#game-canvas {
+    display: block;
+    background-color: #000;
+    touch-action: none;
+    overscroll-behavior: none;
+    /* Canvas will be sized by JavaScript to maintain aspect ratio */
+}
+
+#mobile-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    z-index: 100;
+}
+
+.hidden {
+    display: none;
+}
+
+/* For desktop, hide mobile controls */
+@media (min-width: 768px) {
+    #mobile-controls {
+        display: none;
+    }
+}
+
+
+</style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+    </div>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+<script>
+/**
+ * Game Configuration
+ * Central place to store game parameters for easy tuning
+ */
+const CONFIG = {
+    // Player settings
+    PLAYER: {
+        HEALTH: 200,
+        SPEED: 200,
+        FIRE_RATE: 1.0,
+        PROJECTILE_SPEED: 400,
+        PROJECTILE_DAMAGE: 10,
+        INVULNERABILITY_DURATION: 1.0 // seconds
+    },
+    
+    // Enemy settings
+    ENEMY: {
+        TYPES: {
+            FARMHAND: {
+                HEALTH: 20,
+                COLLISION_DAMAGE: 5,
+                PROJECTILE_DAMAGE: 5,
+                SHOOT_CHANCE: 0.005,
+                PROJECTILE_SPEED: 200,
+                POINTS: 50
+            },
+            FOX: {
+                HEALTH: 20,
+                COLLISION_DAMAGE: 10,
+                PROJECTILE_DAMAGE: 10,
+                SHOOT_CHANCE: 0.008,
+                PROJECTILE_SPEED: 300,
+                POINTS: 100
+            },
+            MONSTER: {
+                HEALTH: 50,
+                COLLISION_DAMAGE: 15,
+                PROJECTILE_DAMAGE: 15,
+                SHOOT_CHANCE: 0.01,
+                PROJECTILE_SPEED: 250,
+                POINTS: 200
+            }
+        }
+    },
+    
+    // Level settings
+    LEVEL: {
+        COMPLETION_DELAY: 3000, // ms before starting next level
+        ENEMY_SPAWN_RATES: [
+            1.5, // Level 1
+            1.8, // Level 2
+            2.1, // Level 3
+            2.4, // Level 4
+            2.7, // Level 5
+            3.0  // Level 6+
+        ],
+        // Power-up count per level
+        POWERUP_COUNTS: [
+            1,  // Level 1: 1 power-up
+            2,  // Level 2: 2 power-ups
+            2,  // Level 3: 2 power-ups
+            2,  // Level 4: 2 power-ups
+            3,  // Level 5: 3 power-ups
+            3   // Level 6+: 3 power-ups
+        ]
+    },
+    
+    // Power-up settings
+    POWERUP: {
+        TYPES: {
+            RAPID_FIRE: {
+                DURATION: 10,        // seconds
+                MULTIPLIER: 2.5,     // multiplies player's fire rate
+                COLOR: '#ff0000',    // red
+                SPAWN_WEIGHT: 25     // adjusted spawn weight
+            },
+            THREE_WAY: {
+                DURATION: 8,          // seconds
+                ANGLE_SPREAD: 25,     // degrees between shots
+                COLOR: '#00ff00',     // green
+                SPAWN_WEIGHT: 25      // adjusted spawn weight
+            },
+            LASER: {
+                DURATION: 5,          // seconds
+                DAMAGE_MULTIPLIER: 2, // multiplies player's projectile damage
+                WIDTH: 8,             // width of laser beam
+                COLOR: '#0000ff',     // blue
+                SPAWN_WEIGHT: 25      // adjusted spawn weight
+            },
+            HEALTH: {
+                HEAL_AMOUNT: 50,      // amount of health to restore
+                COLOR: '#ff00ff',     // magenta/pink
+                SPAWN_WEIGHT: 25      // equal chance with other power-ups
+            }
+        },
+        SIZE: 30,                    // size of power-up pickup in pixels
+        PULSE_SPEED: 2,              // visual pulsing effect speed
+        ROTATION_SPEED: 1            // visual rotation effect speed
+    },
+    
+    // Game settings
+    GAME: {
+        FPS: 60,
+        DEBUG: false
+    }
+};
+
+/**
+ * Game class - Main game controller
+ * Handles the game loop, canvas setup, and core game mechanics
+ */
+
+// All required classes are loaded via script tags in index.html
+class Game {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        this.isRunning = false;
+        this.isPaused = false;
+        this.lastTime = 0;
+        this.totalTime = 0; // Track total game time for debugging
+        this.entities = [];
+        this.player = null;
+        this.projectiles = [];
+        this.enemies = [];
+        this.level = null;
+        this.score = 0;
+        
+        // Pause button element
+        this.pauseButton = null;
+        
+        // Set up the canvas dimensions for mobile-friendly gameplay
+        this.setupCanvas();
+        
+        // Handle window resize
+        window.addEventListener('resize', () => this.setupCanvas());
+    }
+    
+    setupCanvas() {
+        // Always maintain a mobile-like aspect ratio regardless of device
+        const aspectRatio = 9/16; // Common mobile aspect ratio (width/height)
+        
+        // Get container dimensions
+        const container = document.getElementById('game-container');
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        
+        // Calculate dimensions that maintain aspect ratio and fit within container
+        let canvasWidth, canvasHeight;
+        
+        // If container is wider than it is tall (landscape orientation)
+        if (containerWidth / containerHeight > aspectRatio) {
+            // Height is the limiting factor
+            canvasHeight = Math.min(containerHeight, 800); // Cap at 800px height
+            canvasWidth = canvasHeight * aspectRatio;
+        } else {
+            // Width is the limiting factor
+            canvasWidth = containerWidth;
+            canvasHeight = canvasWidth / aspectRatio;
+        }
+        
+        // Set canvas dimensions
+        this.canvas.width = canvasWidth;
+        this.canvas.height = canvasHeight;
+        
+        // Center the canvas (CSS flex already handles this, but for completeness)
+        this.canvas.style.margin = 'auto';
+        
+        // If the game is already running, we need to adjust entity positions
+        if (this.isRunning && this.player) {
+            // Ensure player stays at the bottom of the screen
+            this.player.y = this.canvas.height - 100;
+        }
+    }
+    
+    init() {
+        // Create player
+        this.player = new Player(this);
+        this.entities.push(this.player);
+        
+        // Create controls
+        this.controls = new Controls(this);
+        
+        // Create first level
+        this.level = new Level(this);
+        this.level.generate(1);
+        
+        // Create pause button
+        this.createPauseButton();
+        
+        // Start the game loop
+        this.isRunning = true;
+        requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
+    }
+    
+    createPauseButton() {
+        // Instead of creating a DOM element, we'll draw the pause button on the canvas
+        // and handle clicks on it
+        this.pauseButtonSize = 40; // Size of the pause button
+        this.pauseButtonX = this.canvas.width - 50; // Position from right edge
+        this.pauseButtonY = 70; // Position from top, with more space below the level indicator
+        this.isPauseButtonHovered = false;
+        
+        // Add click listener to the canvas for the pause button
+        this.canvas.addEventListener('click', (event) => {
+            const rect = this.canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            
+            // Check if click is within the pause button area
+            if (this.isPointInPauseButton(clickX, clickY)) {
+                this.togglePause();
+            }
+        });
+        
+        // Add hover effect for better UX
+        this.canvas.addEventListener('mousemove', (event) => {
+            const rect = this.canvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const mouseY = event.clientY - rect.top;
+            
+            this.isPauseButtonHovered = this.isPointInPauseButton(mouseX, mouseY);
+        });
+        
+        // For mobile, add touch event
+        this.canvas.addEventListener('touchstart', (event) => {
+            const rect = this.canvas.getBoundingClientRect();
+            const touchX = event.touches[0].clientX - rect.left;
+            const touchY = event.touches[0].clientY - rect.top;
+            
+            if (this.isPointInPauseButton(touchX, touchY)) {
+                this.togglePause();
+                event.preventDefault(); // Prevent scrolling/zooming
+            }
+        });
+    }
+    
+    isPointInPauseButton(x, y) {
+        return x >= this.pauseButtonX - this.pauseButtonSize/2 && 
+               x <= this.pauseButtonX + this.pauseButtonSize/2 && 
+               y >= this.pauseButtonY - this.pauseButtonSize/2 && 
+               y <= this.pauseButtonY + this.pauseButtonSize/2;
+    }
+    
+    drawPauseButton() {
+        // Draw the pause button on the canvas
+        this.ctx.save();
+        
+        // Draw button background
+        this.ctx.fillStyle = this.isPauseButtonHovered ? 'rgba(80, 80, 80, 0.7)' : 'rgba(40, 40, 40, 0.7)';
+        this.ctx.beginPath();
+        this.ctx.arc(this.pauseButtonX, this.pauseButtonY, this.pauseButtonSize/2, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Draw pause/play icon
+        this.ctx.fillStyle = '#ffffff';
+        if (this.isPaused) {
+            // Draw play triangle
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.pauseButtonX - 7, this.pauseButtonY - 10);
+            this.ctx.lineTo(this.pauseButtonX - 7, this.pauseButtonY + 10);
+            this.ctx.lineTo(this.pauseButtonX + 13, this.pauseButtonY);
+            this.ctx.closePath();
+            this.ctx.fill();
+        } else {
+            // Draw pause bars
+            this.ctx.fillRect(this.pauseButtonX - 12, this.pauseButtonY - 10, 8, 20);
+            this.ctx.fillRect(this.pauseButtonX + 4, this.pauseButtonY - 10, 8, 20);
+        }
+        
+        this.ctx.restore();
+    }
+    
+    togglePause() {
+        this.isPaused = !this.isPaused;
+        
+        // Get or create pause overlay
+        let pauseOverlay = document.getElementById('pause-overlay');
+        
+        if (this.isPaused) {
+            // If paused and overlay doesn't exist, create it
+            if (!pauseOverlay) {
+                this.createPauseOverlay();
+            } else {
+                // Show existing overlay
+                pauseOverlay.style.display = 'flex';
+            }
+            // Draw the pause button with the play icon
+            this.drawPauseButton();
+        } else {
+            // Hide the overlay when resuming
+            if (pauseOverlay) {
+                pauseOverlay.style.display = 'none';
+            }
+            // Resume the game loop
+            this.lastTime = performance.now();
+            requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
+        }
+    }
+    
+    createPauseOverlay() {
+        // Use the reusable overlay function to create the pause screen
+        const pauseOverlay = createGameOverlay({
+            id: 'pause-overlay',
+            title: 'GAME PAUSED',
+            titleColor: '#ffffff',
+            subtitle: 'Click ▶️ to resume',
+            subtitleColor: '#ffffff',
+            backgroundColor: 'rgba(0, 0, 0, 0.7)'
+            // No buttons needed as the pause button handles resuming
+        });
+        
+        // Add the overlay to the game container
+        document.getElementById('game-container').appendChild(pauseOverlay);
+    }
+    
+    gameLoop(timestamp) {
+        if (this.isPaused) {
+            return;
+        }
+        
+        // Calculate delta time (time since last frame)
+        const deltaTime = timestamp - this.lastTime;
+        this.lastTime = timestamp;
+        
+        // Update total game time (in seconds)
+        const deltaTimeSeconds = deltaTime / 1000;
+        this.totalTime += deltaTimeSeconds;
+        
+        // Clear the canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Update all entities
+        this.update(deltaTimeSeconds); // Already converted to seconds
+        
+        // Draw all entities
+        this.draw();
+        
+        // Continue the game loop if the game is still running
+        if (this.isRunning) {
+            requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
+        }
+    }
+    
+    update(deltaTime) {
+        // Update level
+        if (this.level) {
+            this.level.update(deltaTime);
+        }
+        
+        // Update all entities
+        for (let i = this.entities.length - 1; i >= 0; i--) {
+            const entity = this.entities[i];
+            entity.update(deltaTime);
+            
+            // Remove dead entities
+            if (entity.isDead) {
+                if (entity.constructor.name === 'Enemy') {
+                    console.log(`Removing dead enemy of type ${entity.type} at position (${Math.round(entity.x)}, ${Math.round(entity.y)}), health: ${entity.health}, lifespan: ${Math.round(entity.lifespan)}s`);
+                    
+                    // Also remove from enemies array if it's still there
+                    const enemyIndex = this.enemies.indexOf(entity);
+                    if (enemyIndex !== -1) {
+                        this.enemies.splice(enemyIndex, 1);
+                        console.log(`Removed enemy from enemies array, ${this.enemies.length} enemies remaining`);
+                    } else {
+                        console.log(`Warning: Enemy not found in enemies array`);
+                    }
+                }
+                this.entities.splice(i, 1);
+            }
+        }
+        
+        // Check for collisions
+        this.checkCollisions();
+    }
+    
+    draw() {
+        // Draw level
+        if (this.level) {
+            this.level.draw(this.ctx);
+        }
+        
+        // Draw all entities
+        for (const entity of this.entities) {
+            entity.draw(this.ctx);
+        }
+        
+        // Draw UI
+        this.drawUI();
+    }
+    
+    drawUI() {
+        // Draw score
+        this.ctx.fillStyle = '#fff';
+        this.ctx.font = '20px Arial';
+        this.ctx.textAlign = 'left';
+        this.ctx.fillText(`Score: ${this.score}`, 20, 30);
+        
+        // Draw current level
+        if (this.level) {
+            this.ctx.textAlign = 'right';
+            this.ctx.fillText(`Level: ${this.level.currentLevel}`, this.canvas.width - 20, 30);
+        }
+        
+        // Draw pause button
+        this.drawPauseButton();
+    }
+    
+    checkCollisions() {
+        // First, create a list of projectiles to remove after processing
+        const projectilesToRemove = [];
+        
+        // Check projectile-enemy collisions
+        for (let i = 0; i < this.projectiles.length; i++) {
+            const projectile = this.projectiles[i];
+            
+            // Skip already dead projectiles
+            if (projectile.isDead) {
+                continue;
+            }
+            
+            // Only player projectiles can damage enemies (enemy projectiles won't hurt other enemies)
+            if (projectile.isPlayerProjectile) {
+                let hasHitEnemy = false;
+                
+                for (let j = this.enemies.length - 1; j >= 0; j--) {
+                    const enemy = this.enemies[j];
+                    
+                    if (this.isColliding(projectile, enemy)) {
+                        // Log collision details
+                        console.log(`Player projectile at (${Math.round(projectile.x)}, ${Math.round(projectile.y)}) hit ${enemy.type} at (${Math.round(enemy.x)}, ${Math.round(enemy.y)})`);
+                        
+                        enemy.takeDamage(projectile.damage);
+                        
+                        // Only mark regular projectiles as dead after hitting an enemy
+                        // Lasers can hit multiple enemies
+                        if (!projectile.isLaser) {
+                            projectile.isDead = true;
+                            projectilesToRemove.push(projectile);
+                            hasHitEnemy = true;
+                        }
+                        
+                        if (enemy.isDead) {
+                            this.score += enemy.points;
+                            console.log(`Enemy ${enemy.type} killed by damage at position (${Math.round(enemy.x)}, ${Math.round(enemy.y)}), lived for ${Math.round(enemy.lifespan)}s`);
+                            // We'll remove from enemies array in the main update loop to ensure consistency
+                        }
+                        
+                        // Break after first hit - but only for regular projectiles, not lasers
+                        if (!projectile.isLaser) {
+                            break;
+                        }
+                        // For lasers, continue checking other enemies
+                    }
+                }
+                
+                // If this projectile hit an enemy, don't check it against other enemies
+                if (hasHitEnemy) {
+                    continue;
+                }
+            }
+        }
+        
+        // Remove dead projectiles from the projectiles array
+        for (const projectile of projectilesToRemove) {
+            const index = this.projectiles.indexOf(projectile);
+            if (index !== -1) {
+                this.projectiles.splice(index, 1);
+            }
+        }
+        
+        // Check enemy-player collisions
+        for (const enemy of this.enemies) {
+            if (this.isColliding(enemy, this.player)) {
+                this.player.takeDamage(enemy.damage, true); // true indicates collision damage
+                
+                if (this.player.isDead) {
+                    this.gameOver();
+                }
+            }
+        }
+        
+        // Check for power-up collisions with player
+        for (const entity of this.entities) {
+            if (entity.constructor.name === 'PowerUp' && !entity.isDead && this.isColliding(entity, this.player)) {
+                // PowerUp's update method will handle the application of effects
+                // We don't need to do anything here as the PowerUp class handles its own collision detection
+            }
+        }
+        
+        // Check enemy projectile-player collisions
+        for (let i = this.projectiles.length - 1; i >= 0; i--) {
+            const projectile = this.projectiles[i];
+            
+            // Skip already dead projectiles
+            if (projectile.isDead) {
+                continue;
+            }
+            
+            // Only check enemy projectiles (not player projectiles)
+            if (!projectile.isPlayerProjectile && this.isColliding(projectile, this.player)) {
+                console.log(`Enemy projectile hit player at (${Math.round(projectile.x)}, ${Math.round(projectile.y)})`);
+                this.player.takeDamage(projectile.damage);
+                projectile.isDead = true;
+                projectilesToRemove.push(projectile); // Add to removal list
+                
+                if (this.player.isDead) {
+                    this.gameOver();
+                }
+            }
+        }
+    }
+    
+    isColliding(a, b) {
+        
+        // Special case for laser projectiles
+        if (a.isLaser) {
+            // For lasers, check if the enemy is in the laser's vertical path
+            // The laser extends from the player's position to the top of the screen
+            // and has a fixed width defined in the config
+            
+            // Check if the enemy's horizontal position overlaps with the laser's width
+            const horizontalOverlap = (
+                a.x < b.x + b.width &&
+                a.x + a.width > b.x
+            );
+            
+            // Check if the enemy is above the player (in the laser's path)
+            const inLaserPath = b.y < a.y;
+            
+            return horizontalOverlap && inLaserPath;
+        }
+        
+        // Standard bounding box collision for regular projectiles
+        return (
+            a.x < b.x + b.width &&
+            a.x + a.width > b.x &&
+            a.y < b.y + b.height &&
+            a.y + a.height > b.y
+        );
+    }
+    
+    spawnEnemy(type, x, y) {
+        const enemy = new Enemy(this, type, x, y);
+        this.entities.push(enemy);
+        this.enemies.push(enemy);
+        return enemy;
+    }
+    
+    spawnPowerUp(x, y, type) {
+        const powerUp = new PowerUp(this, x, y, type);
+        this.entities.push(powerUp);
+        console.log(`Spawned ${type} power-up at (${Math.round(x)}, ${Math.round(y)})`);
+        return powerUp;
+    }
+    
+    spawnProjectile(x, y, direction, speed, damage, isPlayerProjectile = true, isLaser = false, enemyType = null) {
+        // Create the projectile with additional properties if needed
+        const projectile = new Projectile(this, x, y, direction, speed, damage, isPlayerProjectile, isLaser, enemyType);
+        
+        // Add to entity and projectile arrays
+        this.entities.push(projectile);
+        this.projectiles.push(projectile);
+        
+        return projectile;
+    }
+    
+    gameOver() {
+        console.log('Game Over!');
+        this.isRunning = false;
+        
+        // Show game over screen
+        // TODO: Implement game over screen
+    }
+}
+
+/**
+ * Player class - Represents the chicken protagonist
+ * Handles player movement, shooting, and stats
+ */
+class Player {
+    constructor(game) {
+        this.game = game;
+        this.width = 50;
+        this.height = 50;
+        this.x = game.canvas.width / 2 - this.width / 2;
+        this.y = game.canvas.height - 100;
+        this.speed = 200; // pixels per second
+        this.health = 200;
+        this.maxHealth = 200; // Increased health to give player more survivability
+        this.isDead = false;
+        this.direction = { x: 0, y: 0 };
+        
+        // Invulnerability properties
+        this.isInvulnerable = false;
+        this.invulnerabilityDuration = 1.0; // 1 second of invulnerability after collision
+        this.invulnerabilityTimer = 0;
+        
+        // Damage flash effect properties
+        this.isFlashing = false;
+        this.flashDuration = 0.3; // 0.3 seconds of flashing when taking damage
+        this.flashTimer = 0;
+        
+        // Weapon properties
+        this.fireRate = 1.0; // shots per second (doubled from 0.5)
+        this.lastShotTime = 0;
+        this.projectileSpeed = 400;
+        this.projectileDamage = 10;
+        
+        // Store original weapon properties for reverting after power-ups expire
+        this.originalFireRate = this.fireRate;
+        this.originalProjectileDamage = this.projectileDamage;
+        
+        // Power-up properties
+        this.activePowerUps = {}; // Will store active power-ups and their timers
+        
+        // Auto-fire properties
+        this.isAutoFiring = true;
+        this.autoFireInterval = null;
+        
+        // Movement locking for level transitions
+        this.isMovementLocked = false;
+        
+        // Start auto-firing
+        this.startAutoFire();
+    }
+    
+    update(deltaTime) {
+        // Skip movement if locked (during level transitions or obstacle generation)
+        if (this.isMovementLocked) {
+            return;
+        }
+        
+        // Calculate potential new position
+        const newX = this.x + this.direction.x * this.speed * deltaTime;
+        const newY = this.y + this.direction.y * this.speed * deltaTime;
+        
+        // Check for obstacle collisions before moving
+        let canMoveX = true;
+        let canMoveY = true;
+        
+        // Safely check if level exists and has obstacles
+        if (!this.game.level || !this.game.level.obstacles) {
+            // If no obstacles, allow movement
+            this.x = newX;
+            this.y = newY;
+            
+            // Keep player within canvas bounds and return early
+            this.x = Math.max(0, Math.min(this.game.canvas.width - this.width, this.x));
+            this.y = Math.max(0, Math.min(this.game.canvas.height - this.height, this.y));
+            return;
+        }
+        
+        const obstacles = this.game.level.obstacles;
+        
+        // First, check if we're already inside an obstacle (can happen at level start)
+        let isStuckInObstacle = false;
+        const currentHitbox = {
+            x: this.x,
+            y: this.y,
+            width: this.width,
+            height: this.height
+        };
+        
+        for (const obstacle of obstacles) {
+            if (this.checkCollision(currentHitbox, obstacle)) {
+                isStuckInObstacle = true;
+                break;
+            }
+        }
+        
+        // If stuck, allow movement in any direction that gets us out of the obstacle
+        if (isStuckInObstacle) {
+            console.log('Player is stuck in obstacle! Allowing escape movement.');
+            
+            // Try to move in all directions to escape
+            const escapeDirections = [
+                { x: newX, y: this.y }, // Try moving horizontally
+                { x: this.x, y: newY }, // Try moving vertically
+                { x: newX, y: newY }    // Try moving diagonally
+            ];
+            
+            for (const pos of escapeDirections) {
+                const escapeHitbox = {
+                    x: pos.x,
+                    y: pos.y,
+                    width: this.width,
+                    height: this.height
+                };
+                
+                let canEscape = true;
+                for (const obstacle of obstacles) {
+                    if (this.checkCollision(escapeHitbox, obstacle)) {
+                        canEscape = false;
+                        break;
+                    }
+                }
+                
+                if (canEscape) {
+                    // Found an escape route!
+                    this.x = pos.x;
+                    this.y = pos.y;
+                    return; // Exit early since we've moved
+                }
+            }
+        }
+        
+        // Normal collision checking for non-stuck situations
+        // Create hitboxes for potential positions
+        const newXHitbox = {
+            x: newX,
+            y: this.y,
+            width: this.width,
+            height: this.height
+        };
+        
+        const newYHitbox = {
+            x: this.x,
+            y: newY,
+            width: this.width,
+            height: this.height
+        };
+        
+        // Check each obstacle
+        for (const obstacle of obstacles) {
+            // Check X movement collision
+            if (this.checkCollision(newXHitbox, obstacle)) {
+                canMoveX = false;
+            }
+            
+            // Check Y movement collision
+            if (this.checkCollision(newYHitbox, obstacle)) {
+                canMoveY = false;
+            }
+        }
+        
+        // Apply movement only if no collision
+        if (canMoveX) {
+            this.x = newX;
+        }
+        
+        if (canMoveY) {
+            this.y = newY;
+        }
+        
+        // Keep player within canvas bounds
+        this.x = Math.max(0, Math.min(this.game.canvas.width - this.width, this.x));
+        this.y = Math.max(0, Math.min(this.game.canvas.height - this.height, this.y));
+        
+        // Update damage flash effect
+        if (this.isFlashing) {
+            this.flashTimer += deltaTime;
+            if (this.flashTimer >= this.flashDuration) {
+                this.isFlashing = false;
+                this.flashTimer = 0;
+            }
+        }
+        
+        // Update invulnerability timer
+        if (this.isInvulnerable) {
+            this.invulnerabilityTimer += deltaTime;
+            if (this.invulnerabilityTimer >= this.invulnerabilityDuration) {
+                this.isInvulnerable = false;
+                this.invulnerabilityTimer = 0;
+            }
+        }
+        
+        // Update power-up timers
+        for (const [type, powerUp] of Object.entries(this.activePowerUps)) {
+            powerUp.timer += deltaTime;
+            
+            // Visual feedback for power-up duration
+            const remainingTime = powerUp.duration - powerUp.timer;
+            const isAboutToExpire = remainingTime < 2;
+            
+            // Flash when about to expire
+            if (isAboutToExpire && Math.floor(remainingTime * 5) % 2 === 0) {
+                // Flash effect when power-up is about to expire
+            }
+            
+            // Check if power-up has expired
+            if (powerUp.timer >= powerUp.duration) {
+                this.removePowerUp(type);
+            }
+        }
+    }
+    
+    draw(ctx) {
+        // Save context for invulnerability effect
+        ctx.save();
+        
+        // If player is invulnerable, create a pulsing effect
+        if (this.isInvulnerable) {
+            // Make player semi-transparent and pulsing when invulnerable
+            const pulseRate = 10; // Higher values = faster pulse
+            const alpha = 0.4 + Math.sin(this.invulnerabilityTimer * pulseRate) * 0.3;
+            ctx.globalAlpha = alpha;
+            
+            // Add a shield-like glow
+            ctx.shadowColor = '#00aaff';
+            ctx.shadowBlur = 10;
+        }
+        
+        // Draw player (temporary rectangle until we have sprites)
+        if (this.isFlashing) {
+            // Flash between yellow and red when taking damage
+            const flashIntensity = Math.sin(this.flashTimer * 30) * 0.5 + 0.5;
+            ctx.fillStyle = `rgb(255, ${Math.floor(204 * (1 - flashIntensity))}, 0)`;
+        } else {
+            ctx.fillStyle = '#ffcc00'; // Yellow for the chicken
+        }
+        
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        
+        // Restore context after drawing player
+        ctx.restore();
+        
+        // Draw health bar
+        this.drawHealthBar(ctx);
+        
+        // Draw power-up indicators
+        this.drawPowerUpIndicators(ctx);
+    }
+    
+    drawHealthBar(ctx) {
+        const barWidth = this.width;
+        const barHeight = 5;
+        const barX = this.x;
+        const barY = this.y - 10;
+        
+        // Background (empty health)
+        ctx.fillStyle = '#333';
+        ctx.fillRect(barX, barY, barWidth, barHeight);
+        
+        // Health amount
+        const healthPercentage = this.health / this.maxHealth;
+        ctx.fillStyle = healthPercentage > 0.5 ? '#00cc00' : healthPercentage > 0.25 ? '#ffcc00' : '#cc0000';
+        ctx.fillRect(barX, barY, barWidth * healthPercentage, barHeight);
+    }
+    
+    drawPowerUpIndicators(ctx) {
+        // Only draw if there are active power-ups
+        if (Object.keys(this.activePowerUps).length === 0) {
+            return;
+        }
+        
+        // Position indicators above health bar
+        const indicatorSize = 15;
+        const spacing = 5;
+        let offsetX = 0;
+        
+        // Draw an indicator for each active power-up
+        for (const [type, powerUp] of Object.entries(this.activePowerUps)) {
+            // Get color from config
+            const color = CONFIG.POWERUP.TYPES[type].COLOR;
+            
+            // Calculate position
+            const x = this.x + offsetX;
+            const y = this.y - 25; // Above health bar
+            
+            // Draw indicator background
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.7;
+            ctx.fillRect(x, y, indicatorSize, indicatorSize);
+            ctx.globalAlpha = 1.0;
+            
+            // Draw timer bar
+            const timerPercentage = 1 - (powerUp.timer / powerUp.duration);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(x, y + indicatorSize - 3, indicatorSize * timerPercentage, 3);
+            
+            // Draw icon or letter based on power-up type
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            let label = '';
+            switch(type) {
+                case 'RAPID_FIRE': label = 'R'; break;
+                case 'THREE_WAY': label = '3'; break;
+                case 'LASER': label = 'L'; break;
+                default: label = '?';
+            }
+            
+            ctx.fillText(label, x + indicatorSize / 2, y + indicatorSize / 2 - 2);
+            
+            // Increment offset for next indicator
+            offsetX += indicatorSize + spacing;
+        }
+    }
+    
+    shoot() {
+        const now = performance.now() / 1000; // Convert to seconds
+        
+        // Check if enough time has passed since the last shot
+        if (now - this.lastShotTime >= 1 / this.fireRate) {
+            this.lastShotTime = now;
+            
+            // Create projectile at the center-top of the player
+            const projectileX = this.x + this.width / 2 - 5; // 5 is half the projectile width
+            const projectileY = this.y - 10;
+            
+            // Direction is upward
+            const direction = { x: 0, y: -1 };
+            
+            // Determine if LASER power-up is active for damage calculation
+            const isLaserActive = this.activePowerUps['LASER'] ? true : false;
+            let projectileDamage = this.projectileDamage;
+            let isLaser = false;
+            
+            if (isLaserActive) {
+                // Apply laser damage multiplier
+                const laserDamageMultiplier = CONFIG.POWERUP.TYPES.LASER.DAMAGE_MULTIPLIER;
+                projectileDamage = this.projectileDamage * laserDamageMultiplier;
+                isLaser = true;
+                console.log(`Firing laser with damage: ${projectileDamage} (base: ${this.projectileDamage} × multiplier: ${laserDamageMultiplier})`);
+            }
+            
+            // Check if THREE_WAY power-up is active
+            if (this.activePowerUps['THREE_WAY']) {
+                // Get the angle spread from config
+                const angleSpread = CONFIG.POWERUP.TYPES.THREE_WAY.ANGLE_SPREAD * (Math.PI / 180); // Convert to radians
+                
+                // Spawn center projectile
+                this.game.spawnProjectile(
+                    projectileX,
+                    projectileY,
+                    { x: 0, y: -1 },
+                    this.projectileSpeed,
+                    projectileDamage,
+                    true,
+                    isLaser
+                );
+                
+                // Spawn left projectile
+                this.game.spawnProjectile(
+                    projectileX,
+                    projectileY,
+                    { 
+                        x: Math.sin(-angleSpread), 
+                        y: -Math.cos(angleSpread) 
+                    },
+                    this.projectileSpeed,
+                    projectileDamage,
+                    true,
+                    isLaser
+                );
+                
+                // Spawn right projectile
+                this.game.spawnProjectile(
+                    projectileX,
+                    projectileY,
+                    { 
+                        x: Math.sin(angleSpread), 
+                        y: -Math.cos(angleSpread) 
+                    },
+                    this.projectileSpeed,
+                    projectileDamage,
+                    true,
+                    isLaser
+                );
+            } 
+            // Single shot (either laser or regular)
+            else {
+                // Spawn the projectile
+                this.game.spawnProjectile(
+                    projectileX,
+                    projectileY,
+                    direction,
+                    this.projectileSpeed,
+                    projectileDamage,
+                    true,
+                    isLaser
+                );
+            }
+            
+            // TODO: Add sound effect for shooting
+        }
+    }
+    
+    startAutoFire() {
+        if (this.isAutoFiring) {
+            // Clear any existing interval
+            if (this.autoFireInterval) {
+                clearInterval(this.autoFireInterval);
+            }
+            
+            // Set up auto-firing interval
+            this.autoFireInterval = setInterval(() => {
+                if (this.game.isRunning && !this.isDead) {
+                    this.shoot();
+                }
+            }, 1000 / this.fireRate);
+        }
+    }
+    
+    stopAutoFire() {
+        if (this.autoFireInterval) {
+            clearInterval(this.autoFireInterval);
+            this.autoFireInterval = null;
+        }
+    }
+    
+    applyPowerUp(type) {
+        const powerUpConfig = CONFIG.POWERUP.TYPES[type];
+        
+        // Special handling for HEALTH power-up (immediate effect, no duration)
+        if (type === 'HEALTH') {
+            const healAmount = powerUpConfig.HEAL_AMOUNT;
+            const oldHealth = this.health;
+            
+            // Add health but don't exceed max health
+            this.health = Math.min(this.maxHealth, this.health + healAmount);
+            const actualHealAmount = this.health - oldHealth;
+            
+            // Show healing amount as text
+            this.showHealingText(actualHealAmount);
+            
+            console.log(`Health power-up applied: +${actualHealAmount} health (${oldHealth} → ${this.health})`);
+            return; // Exit early, no need to add to active power-ups
+        }
+        
+        // For regular power-ups with duration
+        // If this power-up is already active, just reset the timer
+        if (this.activePowerUps[type]) {
+            this.activePowerUps[type].timer = 0;
+            console.log(`Power-up ${type} refreshed, duration: ${powerUpConfig.DURATION}s`);
+            return;
+        }
+        
+        // Add power-up to active power-ups
+        this.activePowerUps[type] = {
+            duration: powerUpConfig.DURATION,
+            timer: 0
+        };
+        
+        // Apply immediate effect based on power-up type
+        switch(type) {
+            case 'RAPID_FIRE':
+                // Store original fire rate if not already stored
+                if (this.fireRate === this.originalFireRate) {
+                    this.originalFireRate = this.fireRate;
+                }
+                // Increase fire rate
+                this.fireRate = this.originalFireRate * powerUpConfig.MULTIPLIER;
+                // Restart auto-fire with new rate if active
+                if (this.isAutoFiring) {
+                    this.stopAutoFire();
+                    this.startAutoFire();
+                }
+                break;
+                
+            case 'LASER':
+                // Store original damage if not already stored
+                if (this.projectileDamage === this.originalProjectileDamage) {
+                    this.originalProjectileDamage = this.projectileDamage;
+                }
+                // Increase projectile damage
+                this.projectileDamage = this.originalProjectileDamage * powerUpConfig.DAMAGE_MULTIPLIER;
+                break;
+                
+            case 'THREE_WAY':
+                // No immediate effect needed, handled in shoot() method
+                break;
+        }
+        
+        console.log(`Power-up ${type} activated, duration: ${powerUpConfig.DURATION}s`);
+    }
+    
+    removePowerUp(type) {
+        // Remove power-up effects
+        switch(type) {
+            case 'RAPID_FIRE':
+                // Reset fire rate to original
+                this.fireRate = this.originalFireRate;
+                // Restart auto-fire with original rate if active
+                if (this.isAutoFiring) {
+                    this.stopAutoFire();
+                    this.startAutoFire();
+                }
+                break;
+                
+            case 'LASER':
+                // Reset projectile damage to original
+                this.projectileDamage = this.originalProjectileDamage;
+                break;
+                
+            case 'THREE_WAY':
+                // No specific cleanup needed
+                break;
+        }
+        
+        // Remove from active power-ups
+        delete this.activePowerUps[type];
+        console.log(`Power-up ${type} expired`);
+    }
+    
+    takeDamage(amount, isCollisionDamage = false) {
+        // If player is invulnerable (from any source), ignore damage
+        if (this.isInvulnerable) {
+            return;
+        }
+        
+        // Flash effect when taking damage
+        this.isFlashing = true;
+        this.flashTimer = 0;
+        
+        // Reduce health
+        this.health -= amount;
+        console.log(`Player taking ${amount} damage, type: ${isCollisionDamage ? 'collision' : 'projectile'}, health before: ${this.health + amount}, after: ${this.health}`);
+        
+        // Show damage amount as text
+        this.showDamageText(amount);
+        
+        // If this was collision damage, make player invulnerable temporarily
+        if (isCollisionDamage) {
+            this.makeInvulnerable(this.invulnerabilityDuration);
+        }
+        
+        if (this.health <= 0) {
+            this.health = 0;
+            this.isDead = true;
+            this.stopAutoFire();
+        }
+    }
+    
+    makeInvulnerable(duration) {
+        // Make player invulnerable for the specified duration
+        this.isInvulnerable = true;
+        this.invulnerabilityTimer = 0;
+        this.invulnerabilityDuration = duration || this.invulnerabilityDuration;
+        
+        // Reset flash effect to prevent continuous flashing
+        this.isFlashing = false;
+        this.flashTimer = 0;
+        
+        console.log(`Player invulnerable for ${this.invulnerabilityDuration} seconds`);
+    }
+    
+    showDamageText(amount) {
+        // Create floating damage text
+        const damageText = document.createElement('div');
+        damageText.textContent = `-${amount}`;
+        damageText.style.position = 'absolute';
+        damageText.style.color = '#ff0000';
+        damageText.style.fontSize = '20px';
+        damageText.style.fontWeight = 'bold';
+        damageText.style.textShadow = '1px 1px 2px #000';
+        
+        // Get canvas position
+        const canvas = this.game.canvas;
+        const canvasRect = canvas.getBoundingClientRect();
+        
+        // Position text at player's position relative to canvas
+        const xPos = canvasRect.left + this.x + this.width / 2;
+        const yPos = canvasRect.top + this.y - 20;
+        
+        damageText.style.left = `${xPos}px`;
+        damageText.style.top = `${yPos}px`;
+        damageText.style.zIndex = '5';
+        damageText.style.pointerEvents = 'none'; // Don't block clicks
+        
+        // Add to game container
+        document.getElementById('game-container').appendChild(damageText);
+        
+        // Animate and remove after a delay
+        let opacity = 1;
+        let posY = yPos;
+        
+        const animateText = () => {
+            opacity -= 0.02;
+            posY -= 1;
+            damageText.style.opacity = opacity;
+            damageText.style.top = `${posY}px`;
+            
+            if (opacity > 0) {
+                requestAnimationFrame(animateText);
+            } else {
+                document.getElementById('game-container').removeChild(damageText);
+            }
+        };
+        
+        requestAnimationFrame(animateText);
+    }
+    
+    showHealingText(amount) {
+        // Create floating healing text
+        const healingText = document.createElement('div');
+        healingText.textContent = `+${amount}`;
+        healingText.style.position = 'absolute';
+        healingText.style.color = '#00ff00'; // Green for healing
+        healingText.style.fontSize = '20px';
+        healingText.style.fontWeight = 'bold';
+        healingText.style.textShadow = '1px 1px 2px #000';
+        
+        // Get canvas position
+        const canvas = this.game.canvas;
+        const canvasRect = canvas.getBoundingClientRect();
+        
+        // Position text at player's position relative to canvas
+        const xPos = canvasRect.left + this.x + this.width / 2;
+        const yPos = canvasRect.top + this.y - 20;
+        
+        healingText.style.left = `${xPos}px`;
+        healingText.style.top = `${yPos}px`;
+        healingText.style.zIndex = '5';
+        healingText.style.pointerEvents = 'none'; // Don't block clicks
+        
+        // Add to game container
+        document.getElementById('game-container').appendChild(healingText);
+        
+        // Animate and remove after a delay
+        let opacity = 1;
+        let posY = yPos;
+        
+        const animateText = () => {
+            opacity -= 0.02;
+            posY -= 1;
+            healingText.style.opacity = opacity;
+            healingText.style.top = `${posY}px`;
+            
+            if (opacity > 0) {
+                requestAnimationFrame(animateText);
+            } else {
+                document.getElementById('game-container').removeChild(healingText);
+            }
+        };
+        
+        requestAnimationFrame(animateText);
+    }
+    
+    heal(amount) {
+        this.health = Math.min(this.maxHealth, this.health + amount);
+    }
+    
+    checkCollision(rect1, rect2) {
+        // Standard AABB (Axis-Aligned Bounding Box) collision detection
+        return (
+            rect1.x < rect2.x + rect2.width &&
+            rect1.x + rect1.width > rect2.x &&
+            rect1.y < rect2.y + rect2.height &&
+            rect1.y + rect1.height > rect2.y
+        );
+    }
+    
+    setDirection(x, y) {
+        // For touch controls, we want to keep the original magnitude for speed control
+        // but still normalize for consistent direction
+        const length = Math.sqrt(x * x + y * y);
+        
+        if (length > 0) {
+            // Apply a speed multiplier based on the input magnitude (for touch controls)
+            // This allows for variable speed based on how far the joystick is pushed
+            const speedMultiplier = Math.min(length, 1.0);
+            
+            // Normalize direction but keep magnitude influence for speed
+            this.direction.x = (x / length) * speedMultiplier;
+            this.direction.y = (y / length) * speedMultiplier;
+        } else {
+            this.direction.x = 0;
+            this.direction.y = 0;
+        }
+    }
+}
+
+/**
+ * Enemy class - Represents various enemies in the game
+ * Handles enemy behavior, movement patterns, and attacks
+ */
+class Enemy {
+    constructor(game, type, x, y) {
+        this.game = game;
+        this.type = type;
+        this.x = x;
+        this.y = y;
+        this.width = 40;
+        this.height = 40;
+        this.speed = 100; // Base speed in pixels per second
+        this.health = this.getInitialHealth();
+        this.maxHealth = this.health;
+        this.isDead = false;
+        this.isFlashing = false;
+        this.flashTimer = 0;
+        this.flashDuration = 0.1; // seconds
+        this.points = 10; // Base points
+        this.horizontalDirection = Math.random() > 0.5 ? 1 : -1;
+        this.verticalDirection = Math.random() > 0.5 ? 0.5 : -0.5;
+        this.behaviorType = Math.random() > 0.3 ? 'patrol' : 'hover';
+        this.targetY = 0;
+        this.movementTimer = 0;
+        this.lifespan = 0;
+        this.maxLifespan = 30; // seconds before auto-removal
+        
+        // Add obstacle avoidance state
+        this.isAvoidingObstacle = false;
+        this.avoidanceTimer = 0;
+        this.avoidanceDuration = 1.0; // seconds to maintain avoidance direction
+        
+        // Set properties based on type
+        this.setPropertiesByType();
+        
+        // Set movement pattern based on type
+        this.movementPattern = this.getMovementPattern();
+        
+        // Set target Y position for hover behavior
+        if (this.behaviorType === 'hover') {
+            this.targetY = game.canvas.height - this.height - 100 - Math.random() * 100;
+        } else {
+            // For patrol behavior, set a target Y in the upper half of the screen
+            this.targetY = 50 + Math.random() * (game.canvas.height / 2 - 100);
+        }
+        
+        // Movement pattern
+        this.movementPattern = this.getMovementPattern();
+        this.movementTimer = 0;
+        
+        // Add a lifespan counter to track how long the enemy has been alive
+        this.lifespan = 0;
+        // Add a max lifespan to prevent enemies from living forever if they get stuck
+        this.maxLifespan = 120; // 2 minutes in seconds
+        
+        // Visual feedback properties
+        this.isFlashing = false;
+        this.flashDuration = 0.2; // seconds
+        this.flashTimer = 0;
+        
+        console.log(`Created ${this.type} enemy at (${Math.round(this.x)}, ${Math.round(this.y)}) with behavior: ${this.behaviorType}`);
+    }
+    
+    setPropertiesByType() {
+        switch (this.type) {
+            case 'farmhand':
+                this.width = 40;
+                this.height = 40;
+                this.speed = 100;
+                this.health = 20; // Reduced from 30 to allow 2-shot kills with player damage of 10
+                this.damage = 5; // Reduced from 10 to make early levels easier
+                this.points = 50;
+                this.color = '#8B4513'; // Brown
+                break;
+                
+            case 'fox':
+                this.width = 35;
+                this.height = 35;
+                this.speed = 150;
+                this.health = 20;
+                this.damage = 15;
+                this.points = 75;
+                this.color = '#FF6600'; // Orange
+                break;
+                
+            case 'monster':
+                this.width = 50;
+                this.height = 50;
+                this.speed = 80;
+                this.health = 50;
+                this.damage = 20;
+                this.points = 100;
+                this.color = '#660066'; // Purple
+                break;
+                
+            default:
+                // Default enemy properties
+                this.width = 40;
+                this.height = 40;
+                this.speed = 100;
+                this.health = 30;
+                this.damage = 10;
+                this.points = 50;
+                this.color = '#FF0000'; // Red
+        }
+    }
+    
+    getMovementPattern() {
+        // Different movement patterns based on enemy type
+        switch (this.type) {
+            case 'farmhand':
+                return this.straightMovement;
+                
+            case 'fox':
+                return this.zigzagMovement;
+                
+            case 'monster':
+                return this.followPlayerMovement;
+                
+            default:
+                return this.straightMovement;
+        }
+    }
+    
+    update(deltaTime) {
+        // Update movement timer
+        this.movementTimer += deltaTime;
+        
+        // Track enemy lifespan
+        this.lifespan += deltaTime;
+        
+        // Check if enemy has been alive too long - this might be causing the disappearing enemies
+        if (this.lifespan > this.maxLifespan) {
+            console.log(`Enemy ${this.type} reached max lifespan of ${this.maxLifespan}s and is being removed`);
+            this.isDead = true;
+            return;
+        }
+        
+        // Update obstacle avoidance timer if active
+        if (this.isAvoidingObstacle) {
+            this.avoidanceTimer += deltaTime;
+            if (this.avoidanceTimer >= this.avoidanceDuration) {
+                // Reset avoidance state after duration expires
+                this.isAvoidingObstacle = false;
+                this.avoidanceTimer = 0;
+            }
+            
+            // When avoiding obstacles, just apply the current direction
+            // Don't use the normal movement pattern
+            this.x += this.speed * this.horizontalDirection * deltaTime;
+            this.y += this.speed * this.verticalDirection * deltaTime;
+        } else {
+            // Only use normal movement pattern when not avoiding obstacles
+            this.movementPattern(deltaTime);
+        }
+        
+        // Log position if enemy is near the edge of the screen
+        const edgeThreshold = 20;
+        if (this.x < edgeThreshold || this.x > this.game.canvas.width - this.width - edgeThreshold ||
+            this.y < edgeThreshold || this.y > this.game.canvas.height - this.height - edgeThreshold) {
+            // Only log occasionally to avoid console spam
+            if (Math.random() < 0.01) {
+                console.log(`Enemy ${this.type} near edge at (${Math.round(this.x)}, ${Math.round(this.y)}), lifespan: ${Math.round(this.lifespan)}s`);
+            }
+        }
+        
+        // Keep enemy within canvas bounds
+        this.x = Math.max(0, Math.min(this.game.canvas.width - this.width, this.x));
+        
+        // Update damage flash effect
+        if (this.isFlashing) {
+            this.flashTimer += deltaTime;
+            if (this.flashTimer >= this.flashDuration) {
+                this.isFlashing = false;
+                this.flashTimer = 0;
+            }
+        }
+        
+        // Keep enemies on screen - bounce off edges
+        if (this.y > this.game.canvas.height - this.height - 50) {
+            // Don't let enemies get too close to the bottom (player area)
+            this.y = this.game.canvas.height - this.height - 50;
+            // Reverse vertical direction if they hit the bottom boundary
+            if (this.verticalDirection > 0) {
+                this.verticalDirection = -Math.abs(this.verticalDirection);
+            }
+        }
+        
+        // Don't let enemies go off the top of the screen
+        if (this.y < 20) {
+            this.y = 20;
+            // Reverse vertical direction if they hit the top boundary
+            if (this.verticalDirection < 0) {
+                this.verticalDirection = Math.abs(this.verticalDirection);
+            }
+        }
+        
+        // Bounce off left and right edges too
+        if (this.x <= 0 || this.x >= this.game.canvas.width - this.width) {
+            this.horizontalDirection *= -1;
+        }
+        
+        // Check for obstacle collisions
+        this.handleObstacleCollisions();
+        
+        // All enemy types can shoot now
+        this.tryToShoot(deltaTime);
+    }
+    
+    draw(ctx) {
+        // Draw enemy (temporary rectangle until we have sprites)
+        if (this.isFlashing) {
+            // Flash between normal color and white when taking damage
+            const flashIntensity = Math.sin(this.flashTimer * 30) * 0.5 + 0.5;
+            const r = parseInt(this.color.slice(1, 3), 16);
+            const g = parseInt(this.color.slice(3, 5), 16);
+            const b = parseInt(this.color.slice(5, 7), 16);
+            
+            // Mix with white based on flash intensity
+            const mixedR = Math.floor(r + (255 - r) * flashIntensity);
+            const mixedG = Math.floor(g + (255 - g) * flashIntensity);
+            const mixedB = Math.floor(b + (255 - b) * flashIntensity);
+            
+            ctx.fillStyle = `rgb(${mixedR}, ${mixedG}, ${mixedB})`;
+        } else {
+            ctx.fillStyle = this.color;
+        }
+        
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        
+        // Draw health bar
+        this.drawHealthBar(ctx);
+    }
+    
+    drawHealthBar(ctx) {
+        const barWidth = this.width;
+        const barHeight = 3;
+        const barX = this.x;
+        const barY = this.y - 6;
+        
+        // Background (empty health)
+        ctx.fillStyle = '#333';
+        ctx.fillRect(barX, barY, barWidth, barHeight);
+        
+        // Health amount (assuming enemies have a maxHealth equal to their initial health)
+        const initialHealth = this.getInitialHealth();
+        const healthPercentage = this.health / initialHealth;
+        ctx.fillStyle = '#cc0000';
+        ctx.fillRect(barX, barY, barWidth * healthPercentage, barHeight);
+    }
+    
+    getInitialHealth() {
+        // Return the initial health based on enemy type
+        switch (this.type) {
+            case 'farmhand': return 20; // Match actual farmhand health
+            case 'fox': return 20;
+            case 'monster': return 50;
+            default: return 20;
+        }
+    }
+    
+    // Movement patterns
+    straightMovement(deltaTime) {
+        if (this.behaviorType === 'hover') {
+            // Move toward target Y position
+            const distanceToTarget = this.targetY - this.y;
+            if (Math.abs(distanceToTarget) > 10) {
+                // Move toward target position
+                this.verticalDirection = distanceToTarget > 0 ? 1 : -1;
+                this.y += this.speed * this.verticalDirection * 0.5 * deltaTime;
+            } else {
+                // Once at target position, move horizontally
+                this.x += this.speed * this.horizontalDirection * deltaTime;
+                
+                // Occasionally change horizontal direction
+                if (Math.random() < 0.01) {
+                    this.horizontalDirection *= -1;
+                }
+            }
+        } else { // patrol behavior
+            // Move vertically based on direction
+            this.y += this.speed * this.verticalDirection * deltaTime;
+            
+            // Move horizontally as well
+            this.x += this.speed * this.horizontalDirection * 0.3 * deltaTime;
+            
+            // Occasionally change vertical direction
+            if (Math.random() < 0.02 || Math.abs(this.y - this.targetY) < 20) {
+                this.verticalDirection *= -1;
+            }
+        }
+    }
+    
+    zigzagMovement(deltaTime) {
+        if (this.behaviorType === 'hover') {
+            // Move toward target Y position
+            const distanceToTarget = this.targetY - this.y;
+            if (Math.abs(distanceToTarget) > 10) {
+                // Move toward target position with zigzag
+                this.verticalDirection = distanceToTarget > 0 ? 1 : -1;
+                this.y += this.speed * this.verticalDirection * 0.5 * deltaTime;
+                this.x += Math.sin(this.movementTimer * 5) * this.speed * 0.5 * deltaTime;
+            } else {
+                // Once at target position, zigzag horizontally
+                this.x += this.speed * this.horizontalDirection * deltaTime * 0.7;
+                this.x += Math.sin(this.movementTimer * 5) * this.speed * 0.3 * deltaTime;
+            }
+        } else { // patrol behavior
+            // Move vertically with zigzag
+            this.y += this.speed * 0.6 * this.verticalDirection * deltaTime;
+            this.x += Math.sin(this.movementTimer * 4) * this.speed * deltaTime;
+            
+            // Occasionally change vertical direction
+            if (Math.random() < 0.015 || Math.abs(this.y - this.targetY) < 30) {
+                this.verticalDirection *= -1;
+            }
+        }
+    }
+    
+    followPlayerMovement(deltaTime) {
+        if (this.behaviorType === 'hover') {
+            // Move toward target Y position
+            const distanceToTarget = this.targetY - this.y;
+            if (Math.abs(distanceToTarget) > 10) {
+                // Move toward target position
+                this.verticalDirection = distanceToTarget > 0 ? 1 : -1;
+                this.y += this.speed * this.verticalDirection * 0.5 * deltaTime;
+            } else {
+                // Once at target, focus on following player horizontally
+                if (this.game.player) {
+                    const playerCenterX = this.game.player.x + this.game.player.width / 2;
+                    const enemyCenterX = this.x + this.width / 2;
+                    
+                    if (playerCenterX < enemyCenterX) {
+                        this.x -= this.speed * 0.6 * deltaTime;
+                    } else if (playerCenterX > enemyCenterX) {
+                        this.x += this.speed * 0.6 * deltaTime;
+                    }
+                }
+            }
+        } else { // patrol behavior
+            // Move vertically based on direction but slower
+            this.y += this.speed * 0.5 * this.verticalDirection * deltaTime;
+            
+            // Move toward player on X axis, but less aggressively
+            if (this.game.player) {
+                const playerCenterX = this.game.player.x + this.game.player.width / 2;
+                const enemyCenterX = this.x + this.width / 2;
+                
+                if (playerCenterX < enemyCenterX) {
+                    this.x -= this.speed * 0.2 * deltaTime;
+                } else if (playerCenterX > enemyCenterX) {
+                    this.x += this.speed * 0.2 * deltaTime;
+                }
+            }
+            
+            // Occasionally change vertical direction
+            if (Math.random() < 0.01 || Math.abs(this.y - this.targetY) < 40) {
+                this.verticalDirection *= -1;
+            }
+        }
+    }
+    
+    tryToShoot(deltaTime) {
+        // Random chance to shoot based on enemy type and time
+        let shootChance = 0.005; // Default (farmhand)
+        
+        if (this.type === 'monster') {
+            shootChance = 0.01; // Monsters shoot more frequently
+        } else if (this.type === 'fox') {
+            shootChance = 0.008; // Foxes shoot at medium frequency
+        }
+        
+        if (Math.random() < shootChance) {
+            // Create projectile at the center-bottom of the enemy
+            const projectileX = this.x + this.width / 2 - 5; // 5 is half the projectile width
+            let projectileY;
+            let direction;
+            
+            // More dynamic shooting behavior
+            if (this.game.player) {
+                const playerCenterX = this.game.player.x + this.game.player.width / 2;
+                const playerCenterY = this.game.player.y + this.game.player.height / 2;
+                const enemyCenterX = this.x + this.width / 2;
+                const enemyCenterY = this.y + this.height / 2;
+                
+                // Calculate distance to player
+                const distToPlayer = Math.sqrt(
+                    Math.pow(playerCenterX - enemyCenterX, 2) + 
+                    Math.pow(playerCenterY - enemyCenterY, 2)
+                );
+                
+                // Different behavior based on enemy type and position
+                if (this.behaviorType === 'hover' && this.y > this.game.canvas.height * 0.6) {
+                    // Hovering enemies near the bottom have a chance to shoot at the player
+                    if (Math.random() < 0.7) { // 70% chance to shoot at player
+                        // Shoot toward player
+                        const angle = Math.atan2(playerCenterY - enemyCenterY, playerCenterX - enemyCenterX);
+                        direction = {
+                            x: Math.cos(angle),
+                            y: Math.sin(angle)
+                        };
+                        projectileY = this.y + (direction.y > 0 ? this.height : -10);
+                    } else {
+                        // Shoot upward (30% chance)
+                        projectileY = this.y - 10;
+                        direction = { x: 0, y: -1 };
+                    }
+                } else if (this.y > this.game.canvas.height / 2) {
+                    // If enemy is in bottom half but not hovering near bottom, mix of behaviors
+                    if (this.type === 'monster' || Math.random() < 0.4) {
+                        // Monsters and 40% of others shoot at player
+                        const angle = Math.atan2(playerCenterY - enemyCenterY, playerCenterX - enemyCenterX);
+                        direction = {
+                            x: Math.cos(angle),
+                            y: Math.sin(angle)
+                        };
+                        projectileY = this.y + (direction.y > 0 ? this.height : -10);
+                    } else {
+                        // 60% shoot upward
+                        projectileY = this.y - 10;
+                        direction = { x: 0, y: -1 };
+                    }
+                } else {
+                    // If enemy is in top half, shoot downward or at player
+                    if (distToPlayer < 200 || this.type === 'fox') {
+                        // If close to player or is a fox, aim at player
+                        const angle = Math.atan2(playerCenterY - enemyCenterY, playerCenterX - enemyCenterX);
+                        direction = {
+                            x: Math.cos(angle),
+                            y: Math.sin(angle)
+                        };
+                        projectileY = this.y + (direction.y > 0 ? this.height : -10);
+                    } else {
+                        // Otherwise shoot downward
+                        projectileY = this.y + this.height;
+                        direction = { x: 0, y: 1 };
+                    }
+                }
+            } else {
+                // Fallback if player doesn't exist
+                if (this.y > this.game.canvas.height / 2) {
+                    projectileY = this.y - 10;
+                    direction = { x: 0, y: -1 };
+                } else {
+                    projectileY = this.y + this.height;
+                    direction = { x: 0, y: 1 };
+                }
+            }
+            
+            // For foxes, add some horizontal movement to projectiles
+            if (this.type === 'fox') {
+                // Aim toward player if possible
+                if (this.game.player) {
+                    const playerCenterX = this.game.player.x + this.game.player.width / 2;
+                    const enemyCenterX = this.x + this.width / 2;
+                    const xDiff = playerCenterX - enemyCenterX;
+                    
+                    // Normalize to create a proper direction vector
+                    const length = Math.sqrt(xDiff * xDiff + 1); // +1 to avoid division by zero
+                    direction = {
+                        x: xDiff / length,
+                        y: direction.y
+                    };
+                }
+            }
+            
+            // Spawn the projectile with properties based on enemy type
+            let projectileSpeed = 200;
+            let projectileDamage = 5; // Default for farmhands
+            
+            if (this.type === 'monster') {
+                projectileSpeed = 250;
+                projectileDamage = 15; // Monster projectiles do 15 damage
+            } else if (this.type === 'fox') {
+                projectileSpeed = 300; // Faster projectiles for foxes
+                projectileDamage = 10; // Fox projectiles do 10 damage
+            } else {
+                // Farmhand damage - match collision damage
+                projectileDamage = 5; // Reduced from 12 to make early levels easier
+            }
+            
+            this.game.spawnProjectile(
+                projectileX,
+                projectileY,
+                direction,
+                projectileSpeed,
+                projectileDamage,
+                false, // not a player projectile
+                false, // not a laser
+                this.type // pass the enemy type
+            );
+        }
+    }
+    
+    handleObstacleCollisions() {
+        // Safely check if level exists and has obstacles
+        if (!this.game.level || !this.game.level.obstacles) {
+            return; // Skip collision check if level or obstacles aren't available
+        }
+        
+        const obstacles = this.game.level.obstacles;
+        
+        // Create enemy hitbox
+        const enemyHitbox = {
+            x: this.x,
+            y: this.y,
+            width: this.width,
+            height: this.height
+        };
+        
+        // Check collision with each obstacle
+        for (const obstacle of obstacles) {
+            if (this.checkCollision(enemyHitbox, obstacle)) {
+                // Determine which side of the obstacle was hit
+                const overlapLeft = (this.x + this.width) - obstacle.x;
+                const overlapRight = (obstacle.x + obstacle.width) - this.x;
+                const overlapTop = (this.y + this.height) - obstacle.y;
+                const overlapBottom = (obstacle.y + obstacle.height) - this.y;
+                
+                // Find the smallest overlap (which indicates the collision side)
+                const minOverlap = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
+                
+                // Even larger push distance to help clear obstacles completely
+                const pushDistance = 60; // pixels - very significant push to clear obstacles
+                
+                // HARDCODED PERPENDICULAR MOVEMENT - no bouncing allowed
+                // Set the obstacle avoidance state
+                this.isAvoidingObstacle = true;
+                this.avoidanceTimer = 0;
+                this.avoidanceDuration = 2.0; // Increased to 2.0 seconds to ensure clearing obstacles
+                
+                if (minOverlap === overlapLeft || minOverlap === overlapRight) {
+                    // Horizontal collision - ONLY move vertically
+                    // Completely zero out horizontal movement
+                    this.horizontalDirection = 0;
+                    
+                    // Force pure vertical movement in the opposite direction of current travel
+                    // If moving down or not moving vertically, go up
+                    // If moving up, go down
+                    if (this.verticalDirection >= 0) {
+                        // Was moving down or neutral, force upward
+                        this.verticalDirection = -1.0; // Normalized to normal speed
+                    } else {
+                        // Was moving up, force downward
+                        this.verticalDirection = 1.0; // Normalized to normal speed
+                    }
+                } else {
+                    // Vertical collision - ONLY move horizontally
+                    // Completely zero out vertical movement
+                    this.verticalDirection = 0;
+                    
+                    // Force pure horizontal movement in the opposite direction of current travel
+                    // If moving right or not moving horizontally, go left
+                    // If moving left, go right
+                    if (this.horizontalDirection >= 0) {
+                        // Was moving right or neutral, force leftward
+                        this.horizontalDirection = -1.0; // Normalized to normal speed
+                    } else {
+                        // Was moving left, force rightward
+                        this.horizontalDirection = 1.0; // Normalized to normal speed
+                    }
+                }
+                
+                // Log obstacle avoidance
+                console.log(`Enemy ${this.type} avoiding obstacle at (${Math.round(this.x)}, ${Math.round(this.y)})`)
+                
+                // Minimal push back - just enough to prevent getting stuck
+                const minPushDistance = 5; // Very small push to clear collision
+                
+                // Apply minimal push based on collision side
+                if (minOverlap === overlapLeft) {
+                    this.x = obstacle.x - this.width - minPushDistance;
+                } else if (minOverlap === overlapRight) {
+                    this.x = obstacle.x + obstacle.width + minPushDistance;
+                } else if (minOverlap === overlapTop) {
+                    this.y = obstacle.y - this.height - minPushDistance;
+                } else {
+                    this.y = obstacle.y + obstacle.height + minPushDistance;
+                }
+                
+                // If this is a second collision during avoidance, try the opposite direction
+                if (this.isAvoidingObstacle && this.avoidanceTimer > 0.1) {
+                    // We're already in avoidance mode but hit another obstacle
+                    // This means we're likely stuck - reverse the perpendicular direction
+                    
+                    if (this.horizontalDirection === 0) {
+                        // We were moving vertically, reverse that direction
+                        this.verticalDirection *= -1;
+                    } else if (this.verticalDirection === 0) {
+                        // We were moving horizontally, reverse that direction
+                        this.horizontalDirection *= -1;
+                    }
+                    
+                    console.log(`Enemy ${this.type} reversing direction to escape obstacle trap`);
+                }
+                
+                // Once we've handled one collision, break to avoid multiple adjustments
+                break;
+            }
+        }
+    }
+    
+    checkCollision(rect1, rect2) {
+        // Standard AABB (Axis-Aligned Bounding Box) collision detection
+        return (
+            rect1.x < rect2.x + rect2.width &&
+            rect1.x + rect1.width > rect2.x &&
+            rect1.y < rect2.y + rect2.height &&
+            rect1.y + rect1.height > rect2.y
+        );
+    }
+    
+    takeDamage(amount) {
+        // Log all damage sources
+        console.log(`Enemy ${this.type} taking ${amount} damage at position (${Math.round(this.x)}, ${Math.round(this.y)}), current health: ${this.health}`);
+        
+        this.health -= amount;
+        
+        // Visual feedback for taking damage
+        this.isFlashing = true;
+        this.flashDuration = 0.2; // seconds
+        this.flashTimer = 0;
+        
+        // Show damage amount as text
+        this.showDamageText(amount);
+        
+        if (this.health <= 0) {
+            this.health = 0;
+            this.isDead = true;
+            console.log(`Enemy ${this.type} killed by damage at position (${Math.round(this.x)}, ${Math.round(this.y)}), lived for ${Math.round(this.lifespan)}s`);
+        }
+    }
+    
+    showDamageText(amount) {
+        // Create floating damage text
+        const damageText = document.createElement('div');
+        damageText.textContent = `-${amount}`;
+        damageText.style.position = 'absolute';
+        damageText.style.color = '#ff0000';
+        damageText.style.fontSize = '16px';
+        damageText.style.fontWeight = 'bold';
+        damageText.style.textShadow = '1px 1px 2px #000';
+        
+        // Get canvas position
+        const canvas = this.game.canvas;
+        const canvasRect = canvas.getBoundingClientRect();
+        
+        // Position text at enemy's position relative to canvas
+        const xPos = canvasRect.left + this.x + this.width / 2;
+        const yPos = canvasRect.top + this.y - 10;
+        
+        damageText.style.left = `${xPos}px`;
+        damageText.style.top = `${yPos}px`;
+        damageText.style.zIndex = '5';
+        damageText.style.pointerEvents = 'none'; // Don't block clicks
+        
+        // Add to game container
+        document.getElementById('game-container').appendChild(damageText);
+        
+        // Animate and remove after a delay
+        let opacity = 1;
+        let posY = yPos; // Use the calculated position for animation
+        
+        const animateText = () => {
+            opacity -= 0.02;
+            posY -= 1;
+            damageText.style.opacity = opacity;
+            damageText.style.top = `${posY}px`;
+            
+            if (opacity > 0) {
+                requestAnimationFrame(animateText);
+            } else {
+                document.getElementById('game-container').removeChild(damageText);
+            }
+        };
+        
+        requestAnimationFrame(animateText);
+    }
+}
+
+/**
+ * Projectile class - Represents bullets and other projectiles
+ * Handles projectile movement and collision detection
+ */
+class Projectile {
+    constructor(game, x, y, direction, speed, damage, isPlayerProjectile, isLaser = false, enemyType = null) {
+        this.game = game;
+        this.x = x;
+        this.y = y;
+        this.direction = direction;
+        this.speed = speed;
+        this.damage = damage;
+        this.isPlayerProjectile = isPlayerProjectile;
+        this.isDead = false;
+        this.enemyType = enemyType; // Store the enemy type that fired this projectile
+        
+        // Laser projectile properties
+        this.isLaser = isLaser;
+        
+        // Set dimensions based on projectile type
+        if (this.isLaser) {
+            this.width = CONFIG.POWERUP.TYPES.LASER.WIDTH;
+            // Laser extends from player to top of screen (only upward)
+            this.height = this.y; // Will be adjusted in update method
+        } else {
+            this.width = 10;
+            this.height = 10;
+        }
+    }
+    
+    update(deltaTime) {
+        if (this.isLaser) {
+            // Check for obstacle collisions with laser beam
+            this.checkLaserObstacleCollision();
+            
+            // For laser, update the height to extend from current y position to top of screen or to obstacle
+            this.height = this.y;
+            
+            // Move only in x direction if needed (for angled shots)
+            if (this.direction.x !== 0) {
+                this.x += this.direction.x * this.speed * deltaTime;
+            }
+            
+            // Track lifetime of laser projectiles to automatically remove them
+            if (!this.lifetime) {
+                this.lifetime = 0;
+                this.maxLifetime = 0.5; // Half a second - much more reasonable duration
+            }
+            this.lifetime += deltaTime;
+            
+            // Remove laser after its duration
+            if (this.lifetime > this.maxLifetime) {
+                this.isDead = true;
+            }
+            
+            // Remove laser if it goes off screen horizontally
+            if (this.x < -this.width || this.x > this.game.canvas.width) {
+                this.isDead = true;
+            }
+        } else {
+            // Regular projectile movement
+            this.x += this.direction.x * this.speed * deltaTime;
+            this.y += this.direction.y * this.speed * deltaTime;
+            
+            // Check for collision with obstacles
+            this.checkObstacleCollision();
+            
+            // Remove projectile if it goes off screen
+            if (
+                this.x < -this.width ||
+                this.x > this.game.canvas.width ||
+                this.y < -this.height ||
+                this.y > this.game.canvas.height
+            ) {
+                this.isDead = true;
+            }
+        }
+    }
+    
+    checkObstacleCollision() {
+        // Skip for laser projectiles (they're handled differently)
+        if (this.isLaser) return;
+        
+        // Safely check if level exists and has obstacles
+        if (!this.game.level || !this.game.level.obstacles) {
+            return; // Skip collision check if level or obstacles aren't available
+        }
+        
+        // Get obstacles from the current level
+        const obstacles = this.game.level.obstacles;
+        
+        // Check collision with each obstacle
+        for (const obstacle of obstacles) {
+            if (this.x < obstacle.x + obstacle.width &&
+                this.x + this.width > obstacle.x &&
+                this.y < obstacle.y + obstacle.height &&
+                this.y + this.height > obstacle.y) {
+                
+                // Collision detected - destroy projectile
+                this.isDead = true;
+                
+                // Optional: Add visual feedback (spark effect at collision point)
+                this.createCollisionEffect(obstacle);
+                
+                // Once we've found a collision, no need to check others
+                break;
+            }
+        }
+    }
+    
+    checkLaserObstacleCollision() {
+        // Safely check if level exists and has obstacles
+        if (!this.game.level || !this.game.level.obstacles) {
+            return; // Skip collision check if level or obstacles aren't available
+        }
+        
+        // Get obstacles from the current level
+        const obstacles = this.game.level.obstacles;
+        
+        // For lasers, we need to check if any obstacle intersects the beam
+        // The laser beam extends from (this.x, this.y) to (this.x + this.width, 0)
+        
+        // Store the closest obstacle hit point (if any)
+        let closestHitY = 0;
+        let hitObstacle = null;
+        
+        for (const obstacle of obstacles) {
+            // Check if the obstacle is in the path of the laser beam horizontally
+            if (this.x < obstacle.x + obstacle.width && 
+                this.x + this.width > obstacle.x) {
+                
+                // Check if the obstacle is above the laser origin
+                if (obstacle.y + obstacle.height < this.y) {
+                    // This obstacle is in the path of the laser beam
+                    // Check if it's closer than any previously found obstacle
+                    if (hitObstacle === null || obstacle.y + obstacle.height > closestHitY) {
+                        closestHitY = obstacle.y + obstacle.height;
+                        hitObstacle = obstacle;
+                    }
+                }
+            }
+        }
+        
+        // If we found an obstacle in the path, adjust the laser height
+        if (hitObstacle) {
+            // Set the laser height to end at the obstacle
+            this.laserEndY = hitObstacle.y + hitObstacle.height;
+            
+            // Log the collision for debugging
+            console.log(`Laser hit obstacle at y=${this.laserEndY}`);
+        } else {
+            // No obstacle in path, laser extends to top of screen
+            this.laserEndY = 0;
+        }
+    }
+    
+    createCollisionEffect(obstacle) {
+        // Calculate collision point (approximate center of overlap)
+        const overlapX = Math.max(this.x, obstacle.x);
+        const overlapWidth = Math.min(this.x + this.width, obstacle.x + obstacle.width) - overlapX;
+        const overlapY = Math.max(this.y, obstacle.y);
+        const overlapHeight = Math.min(this.y + this.height, obstacle.y + obstacle.height) - overlapY;
+        
+        // Collision point is center of overlap area
+        const collisionX = overlapX + overlapWidth / 2;
+        const collisionY = overlapY + overlapHeight / 2;
+        
+        // Log collision for debugging
+        console.log(`Projectile hit obstacle at (${Math.round(collisionX)}, ${Math.round(collisionY)})`);
+        
+        // TODO: Add visual effect for collision in future enhancement
+    }
+    
+    draw(ctx) {
+        if (this.isLaser) {
+            // Draw laser beam with special effects
+            ctx.save();
+            
+            // Create gradient for laser
+            const gradient = ctx.createLinearGradient(this.x, 0, this.x + this.width, 0);
+            gradient.addColorStop(0, 'rgba(0, 0, 255, 0.3)'); // Blue edge
+            gradient.addColorStop(0.5, 'rgba(0, 128, 255, 0.7)'); // Bright blue center
+            gradient.addColorStop(1, 'rgba(0, 0, 255, 0.3)'); // Blue edge
+            
+            ctx.fillStyle = gradient;
+            
+            // Get the end point of the laser (either obstacle or top of screen)
+            const laserEndY = this.laserEndY !== undefined ? this.laserEndY : 0;
+            
+            // Draw the laser beam (from player to obstacle or top of screen)
+            ctx.fillRect(this.x, laserEndY, this.width, this.y - laserEndY);
+            
+            // Add a bright center line
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(this.x + this.width / 2, laserEndY);
+            ctx.lineTo(this.x + this.width / 2, this.y);
+            ctx.stroke();
+            
+            // If the laser hit an obstacle, add a small impact effect
+            if (this.laserEndY !== undefined && this.laserEndY > 0) {
+                // Draw impact glow
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.beginPath();
+                ctx.arc(this.x + this.width / 2, this.laserEndY, this.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            ctx.restore();
+        } else {
+            // Draw regular projectile with color based on source
+            if (this.isPlayerProjectile) {
+                ctx.fillStyle = '#00ffff'; // Cyan for player projectiles
+            } else {
+                // Different colors based on enemy type - using lighter shades for better visibility
+                if (this.enemyType === 'farmhand') {
+                    ctx.fillStyle = '#D2B48C'; // Light tan/khaki for farmhand projectiles
+                } else if (this.enemyType === 'fox') {
+                    ctx.fillStyle = '#FFA07A'; // Light salmon/orange for fox projectiles
+                } else if (this.enemyType === 'monster') {
+                    ctx.fillStyle = '#DA70D6'; // Orchid/light purple for monster projectiles
+                } else {
+                    ctx.fillStyle = '#ff6666'; // Lighter red for unknown enemy types
+                }
+            }
+            
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+        }
+    }
+}
+
+/**
+ * PowerUp class - Represents collectible power-ups that enhance player abilities
+ * Handles power-up spawning, collection, and effects
+ */
+class PowerUp {
+    constructor(game, x, y, type) {
+        this.game = game;
+        this.x = x;
+        this.y = y;
+        this.width = CONFIG.POWERUP.SIZE;
+        this.height = CONFIG.POWERUP.SIZE;
+        this.type = type; // 'RAPID_FIRE', 'THREE_WAY', 'LASER'
+        this.isDead = false;
+        this.color = this.getColorByType();
+        
+        // Visual effects
+        this.pulseAmount = 0;
+        this.pulseDirection = 1;
+        this.rotation = 0;
+    }
+    
+    getColorByType() {
+        return CONFIG.POWERUP.TYPES[this.type].COLOR;
+    }
+    
+    update(deltaTime) {
+        // Update visual effects
+        this.updateVisualEffects(deltaTime);
+        
+        // Check collision with player
+        if (this.game.isColliding(this, this.game.player)) {
+            this.applyEffect();
+            this.isDead = true;
+            
+            // Also remove from level's powerUps array if it's still there
+            if (this.game.level && this.game.level.powerUps) {
+                const index = this.game.level.powerUps.indexOf(this);
+                if (index !== -1) {
+                    this.game.level.powerUps.splice(index, 1);
+                }
+            }
+        }
+    }
+    
+    updateVisualEffects(deltaTime) {
+        // Pulsing effect
+        this.pulseAmount += CONFIG.POWERUP.PULSE_SPEED * deltaTime * this.pulseDirection;
+        if (this.pulseAmount > 1) {
+            this.pulseAmount = 1;
+            this.pulseDirection = -1;
+        } else if (this.pulseAmount < 0) {
+            this.pulseAmount = 0;
+            this.pulseDirection = 1;
+        }
+        
+        // Rotation effect
+        this.rotation += CONFIG.POWERUP.ROTATION_SPEED * deltaTime;
+        if (this.rotation > Math.PI * 2) {
+            this.rotation -= Math.PI * 2;
+        }
+    }
+    
+    draw(ctx) {
+        ctx.save();
+        
+        // Translate to center for rotation
+        ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+        ctx.rotate(this.rotation);
+        
+        // Draw power-up with pulsing effect
+        const pulseScale = 0.8 + (this.pulseAmount * 0.4);
+        const size = this.width * pulseScale;
+        
+        // First draw white background circle for all power-up types
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Then draw colored power-up shape based on type
+        ctx.fillStyle = this.color;
+        
+        // Different shapes for different power-up types
+        if (this.type === 'RAPID_FIRE') {
+            // Draw a star for rapid fire
+            this.drawStar(ctx, 0, 0, 5, size / 2 * 0.8, size / 4 * 0.8);
+        } else if (this.type === 'THREE_WAY') {
+            // Draw a triangle for three-way shot
+            this.drawPolygon(ctx, 0, 0, 3, size / 2 * 0.8);
+        } else if (this.type === 'LASER') {
+            // Draw a hexagon for laser
+            this.drawPolygon(ctx, 0, 0, 6, size / 2 * 0.8);
+        } else if (this.type === 'HEALTH') {
+            // Draw a heart for health
+            this.drawHeart(ctx, 0, 0, size / 2 * 0.8);
+        } else {
+            // Default: draw a smaller colored circle on top of white background
+            ctx.beginPath();
+            ctx.arc(0, 0, size / 2 * 0.8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        ctx.restore();
+    }
+    
+    drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
+        let rot = Math.PI / 2 * 3;
+        let x = cx;
+        let y = cy;
+        let step = Math.PI / spikes;
+        
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - outerRadius);
+        
+        for (let i = 0; i < spikes; i++) {
+            x = cx + Math.cos(rot) * outerRadius;
+            y = cy + Math.sin(rot) * outerRadius;
+            ctx.lineTo(x, y);
+            rot += step;
+            
+            x = cx + Math.cos(rot) * innerRadius;
+            y = cy + Math.sin(rot) * innerRadius;
+            ctx.lineTo(x, y);
+            rot += step;
+        }
+        
+        ctx.lineTo(cx, cy - outerRadius);
+        ctx.closePath();
+        ctx.fill();
+    }
+    
+    drawPolygon(ctx, cx, cy, sides, radius) {
+        ctx.beginPath();
+        ctx.moveTo(cx + radius, cy);
+        
+        for (let i = 1; i <= sides; i++) {
+            const angle = (i * 2 * Math.PI / sides);
+            const x = cx + radius * Math.cos(angle);
+            const y = cy + radius * Math.sin(angle);
+            ctx.lineTo(x, y);
+        }
+        
+        ctx.closePath();
+        ctx.fill();
+    }
+    
+    drawHeart(ctx, cx, cy, size) {
+        // Size is the desired height of the heart
+        const width = size * 1.2; // Wider heart
+        const height = size;
+        
+        ctx.beginPath();
+        
+        // Method 2: Draw a heart using two arcs and lines
+        // This creates a much more recognizable heart shape with a deep indentation
+        
+        // Start at the bottom point of the heart
+        ctx.moveTo(cx, cy + height/2);
+        
+        // Draw the left half of the heart
+        ctx.arc(
+            cx - width/4,       // Center X of left arc
+            cy - height/4,       // Center Y of arc (higher up)
+            width/4,            // Radius
+            Math.PI,            // Start angle
+            Math.PI * 2,        // End angle
+            false               // Counterclockwise
+        );
+        
+        // Draw the right half of the heart
+        ctx.arc(
+            cx + width/4,       // Center X of right arc
+            cy - height/4,       // Center Y of arc (higher up)
+            width/4,            // Radius
+            Math.PI,            // Start angle
+            Math.PI * 2,        // End angle
+            false               // Counterclockwise
+        );
+        
+        ctx.closePath();
+        ctx.fill();
+    }
+    
+    applyEffect() {
+        // Apply effect based on type
+        this.game.player.applyPowerUp(this.type);
+        
+        // Play sound effect
+        // TODO: Add sound effect for power-up collection
+        
+        // Show visual feedback
+        this.showCollectionEffect();
+    }
+    
+    showCollectionEffect() {
+        // TODO: Add visual effect when power-up is collected
+        console.log(`Power-up collected: ${this.type}`);
+    }
+}
+
+/**
+ * Controls class - Handles user input for both keyboard and touch
+ * Supports touch controls for mobile devices
+ */
+class Controls {
+    constructor(game) {
+        this.game = game;
+        this.isMobile = window.innerWidth <= 768;
+        
+        // Touch state
+        this.touchStartX = 0;
+        this.touchStartY = 0;
+        
+        // Keyboard state
+        this.keys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false,
+            w: false,
+            a: false,
+            s: false,
+            d: false,
+            ' ': false // Space bar
+        };
+        
+        // Set up event listeners
+        this.setupEventListeners();
+    }
+    
+    setupEventListeners() {
+        // Keyboard events
+        window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
+        
+        // Touch events for all devices
+        // Add touch events directly to the canvas
+        const canvas = this.game.canvas;
+        
+        // Simple touch variables
+        this.touchStartX = 0;
+        this.touchStartY = 0;
+        
+        // Add touch event listeners to canvas
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            this.touchStartX = e.touches[0].clientX;
+            this.touchStartY = e.touches[0].clientY;
+            console.log('Touch start:', this.touchStartX, this.touchStartY);
+        });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (this.game.isRunning) {
+                const touchX = e.touches[0].clientX;
+                const touchY = e.touches[0].clientY;
+                const deltaX = touchX - this.touchStartX;
+                const deltaY = touchY - this.touchStartY;
+                
+                // Use threshold to determine movement direction
+                const threshold = 20;
+                
+                // Calculate normalized direction
+                let dirX = 0, dirY = 0;
+                
+                if (Math.abs(deltaX) > threshold) {
+                    dirX = deltaX > 0 ? 1 : -1;
+                }
+                
+                if (Math.abs(deltaY) > threshold) {
+                    dirY = deltaY > 0 ? 1 : -1;
+                }
+                
+                // Update player direction
+                if (this.game.player) {
+                    this.game.player.setDirection(dirX, dirY);
+                }
+                
+                console.log('Touch move:', dirX, dirY);
+            }
+        });
+        
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            // Stop player movement
+            if (this.game.player) {
+                this.game.player.setDirection(0, 0);
+            }
+            console.log('Touch end');
+        });
+        
+        // Prevent default touch behavior to avoid scrolling while playing
+        document.addEventListener('touchmove', (e) => {
+            if (this.game.isRunning) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            this.isMobile = window.innerWidth <= 768;
+        });
+    }
+    
+    handleKeyDown(e) {
+        // Update key state if it's a key we're tracking
+        if (this.keys.hasOwnProperty(e.key)) {
+            this.keys[e.key] = true;
+            e.preventDefault();
+        }
+        
+        // Update player direction based on current key state
+        this.updatePlayerDirection();
+    }
+    
+    handleKeyUp(e) {
+        // Update key state if it's a key we're tracking
+        if (this.keys.hasOwnProperty(e.key)) {
+            this.keys[e.key] = false;
+            e.preventDefault();
+        }
+        
+        // Update player direction based on current key state
+        this.updatePlayerDirection();
+    }
+    
+    // These methods are no longer needed as we're using direct canvas touch events
+    
+    updatePlayerDirection() {
+        if (!this.game.player) return;
+        
+        // Calculate direction based on keys pressed
+        let dirX = 0;
+        let dirY = 0;
+        
+        // Vertical movement
+        if (this.keys.ArrowUp || this.keys.w) dirY -= 1;
+        if (this.keys.ArrowDown || this.keys.s) dirY += 1;
+        
+        // Horizontal movement
+        if (this.keys.ArrowLeft || this.keys.a) dirX -= 1;
+        if (this.keys.ArrowRight || this.keys.d) dirX += 1;
+        
+        // Update player direction
+        this.game.player.setDirection(dirX, dirY);
+    }
+    
+    update() {
+        // This method can be used for any continuous control updates
+        // Currently, all updates are handled by event listeners
+    }
+}
+
+/**
+ * Level class - Handles level generation and progression
+ * Implements procedural generation for enemies, obstacles, and power-ups
+ */
+class Level {
+    constructor(game) {
+        this.game = game;
+        this.currentLevel = 0;
+        this.enemySpawnRate = 2; // Base enemies per second
+        this.lastEnemySpawn = 0;
+        this.enemyTypes = ['farmhand', 'fox', 'monster'];
+        this.enemyTypeWeights = [70, 20, 10]; // Percentage chance of each type
+        this.obstacles = [];
+        this.powerUps = [];
+        this.backgroundElements = [];
+        this.isLevelComplete = false;
+        this.enemiesRemaining = 0;
+        this.lastLogTime = 0; // For tracking periodic logging
+        
+        // Level boundaries (for semi-scrollable approach)
+        this.boundaries = {
+            left: 0,
+            right: 0,
+            width: 0
+        };
+    }
+    
+    generate(levelNumber) {
+        this.currentLevel = levelNumber;
+        this.isLevelComplete = false;
+        
+        // Clear existing entities
+        this.obstacles = [];
+        this.powerUps = [];
+        this.backgroundElements = [];
+        
+        // Set up level boundaries
+        // For the semi-scrollable approach, we'll make the level 1.5x the screen width
+        this.boundaries.width = this.game.canvas.width * 1.5;
+        this.boundaries.left = -(this.boundaries.width - this.game.canvas.width) / 2;
+        this.boundaries.right = this.boundaries.left + this.boundaries.width;
+        
+        // Determine number of enemies based on level - start with 8 and increase by 3 per level
+        // For level 1, we want exactly 8 enemies
+        this.enemiesRemaining = levelNumber === 1 ? 8 : 8 + ((levelNumber - 1) * 3);
+        
+        // Adjust enemy spawn rate based on level - more gradual increase
+        this.enemySpawnRate = 1.5 + (levelNumber * 0.3);
+        
+        // Adjust enemy type weights based on level
+        if (levelNumber === 1) {
+            // Level 1: Mostly farmhands, very few foxes, no monsters
+            this.enemyTypeWeights = [90, 10, 0];
+        } else if (levelNumber === 2) {
+            // Level 2: More foxes introduced
+            this.enemyTypeWeights = [70, 30, 0];
+        } else if (levelNumber === 3) {
+            // Level 3: Introduce monsters
+            this.enemyTypeWeights = [60, 30, 10];
+        } else if (levelNumber >= 4 && levelNumber <= 6) {
+            // Levels 4-6: Gradually increase monsters and foxes
+            this.enemyTypeWeights = [50, 30, 20];
+        } else if (levelNumber >= 7) {
+            // Levels 7+: Tough mix with more monsters
+            this.enemyTypeWeights = [40, 30, 30];
+        }
+        
+        // Generate obstacles
+        this.generateObstacles();
+        
+        // Generate power-ups
+        this.generatePowerUps();
+        
+        // Generate background elements
+        this.generateBackgroundElements();
+        
+        console.log(`Level ${levelNumber} generated with ${this.enemiesRemaining} enemies`);
+    }
+    
+    update(deltaTime) {
+        // Spawn enemies over time
+        this.updateEnemySpawning(deltaTime);
+        
+        // Periodically log enemy counts for debugging (every 5 seconds)
+        if (Math.floor(this.game.totalTime) % 5 === 0 && Math.floor(this.game.totalTime) !== this.lastLogTime) {
+            this.lastLogTime = Math.floor(this.game.totalTime);
+            console.log(`Level ${this.currentLevel} status: ${this.enemiesRemaining} enemies remaining to spawn, ${this.game.enemies.length} enemies active on screen`);
+        }
+        
+        // Check if level is complete
+        if (this.enemiesRemaining <= 0 && this.game.enemies.length === 0 && !this.isLevelComplete) {
+            console.log(`Level completion criteria met: enemiesRemaining=${this.enemiesRemaining}, enemies.length=${this.game.enemies.length}, isLevelComplete=${this.isLevelComplete}`);
+            this.isLevelComplete = true;
+            this.onLevelComplete();
+        }
+    }
+    
+    draw(ctx) {
+        // Draw background
+        this.drawBackground(ctx);
+        
+        // Draw obstacles
+        for (const obstacle of this.obstacles) {
+            this.drawObstacle(ctx, obstacle);
+        }
+        
+        // Note: Power-ups are now drawn by their own draw method in the entities loop
+        // This prevents duplicate drawing and ensures proper cleanup
+    }
+    
+    drawBackground(ctx) {
+        // Draw a gradient background
+        const gradient = ctx.createLinearGradient(0, 0, 0, this.game.canvas.height);
+        gradient.addColorStop(0, '#000033'); // Dark blue at top
+        gradient.addColorStop(1, '#003300'); // Dark green at bottom
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, this.game.canvas.width, this.game.canvas.height);
+        
+        // Draw background elements (trees, buildings, etc.)
+        for (const element of this.backgroundElements) {
+            ctx.fillStyle = element.color;
+            ctx.fillRect(element.x, element.y, element.width, element.height);
+        }
+    }
+    
+    drawObstacle(ctx, obstacle) {
+        // Darker fill color for the main obstacle
+        ctx.fillStyle = '#666666';
+        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+        
+        // Add a prominent white border
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 4; // Thicker border for better visibility
+        ctx.strokeRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+        
+        // Add a second inner border for a more defined look
+        ctx.strokeStyle = '#AAAAAA';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(
+            obstacle.x + 3, 
+            obstacle.y + 3, 
+            obstacle.width - 6, 
+            obstacle.height - 6
+        );
+    }
+    
+    // The drawPowerUp method has been removed as power-ups now draw themselves
+    // This prevents duplicate drawing and ensures proper cleanup when power-ups are collected
+    
+    updateEnemySpawning(deltaTime) {
+        if (this.enemiesRemaining <= 0) return;
+        
+        // Increment spawn timer
+        this.lastEnemySpawn += deltaTime;
+        
+        // Calculate time between spawns based on spawn rate
+        const spawnInterval = 1 / this.enemySpawnRate;
+        
+        // Check if it's time to spawn a new enemy
+        if (this.lastEnemySpawn >= spawnInterval) {
+            this.lastEnemySpawn = 0;
+            this.spawnEnemy();
+            this.enemiesRemaining--;
+        }
+    }
+    
+    spawnEnemy() {
+        // Determine enemy type based on weights
+        const enemyType = this.getRandomEnemyType();
+        
+        // Random X position within the visible area
+        const x = Math.random() * (this.game.canvas.width - 50);
+        
+        // Y position at the top of the screen (slightly above to make them appear to enter)
+        const y = -50;
+        
+        // Spawn the enemy
+        this.game.spawnEnemy(enemyType, x, y);
+    }
+    
+    getRandomEnemyType() {
+        // Use weighted random selection based on enemyTypeWeights
+        const rand = Math.random() * 100;
+        let cumulativeWeight = 0;
+        
+        for (let i = 0; i < this.enemyTypes.length; i++) {
+            cumulativeWeight += this.enemyTypeWeights[i];
+            if (rand <= cumulativeWeight) {
+                return this.enemyTypes[i];
+            }
+        }
+        
+        // Fallback to first enemy type
+        return this.enemyTypes[0];
+    }
+    
+    generateObstacles() {
+        // Number of obstacles based on level - reduced by approximately half
+        const numObstacles = Math.min(1 + Math.floor(this.currentLevel/2), 4);
+        
+        // Clear existing obstacles
+        this.obstacles = [];
+        
+        // Minimum distance between obstacles (including their sizes)
+        const minDistance = 80; // Increased from 40px to 80px to allow better movement paths
+        
+        // Maximum attempts to place an obstacle
+        const maxAttempts = 20;
+        
+        // Canvas dimensions for convenience
+        const canvasWidth = this.game.canvas.width;
+        const canvasHeight = this.game.canvas.height;
+        
+        // Player safe zone - no obstacles near player position
+        // Use the actual player position rather than a fixed safe zone
+        const playerSafeZone = {
+            x: this.game.player ? this.game.player.x - 100 : canvasWidth / 2 - 150,
+            y: this.game.player ? this.game.player.y - 100 : canvasHeight - 200,
+            width: this.game.player ? this.game.player.width + 200 : 300,
+            height: this.game.player ? this.game.player.height + 200 : 200
+        };
+        
+        console.log(`Creating player safe zone at (${playerSafeZone.x}, ${playerSafeZone.y}) with size ${playerSafeZone.width}x${playerSafeZone.height}`);
+        
+        // Ensure player is not moving during obstacle generation
+        if (this.game.player) {
+            // Store original position to restore after level generation
+            const originalPlayerPosition = {
+                x: this.game.player.x,
+                y: this.game.player.y
+            };
+            
+            // Temporarily lock player movement
+            this.game.player.isMovementLocked = true;
+            
+            // Set a timeout to unlock player movement after obstacles are generated
+            setTimeout(() => {
+                if (this.game.player) {
+                    this.game.player.isMovementLocked = false;
+                    console.log('Player movement unlocked after obstacle generation');
+                }
+            }, 500); // 500ms should be enough time for obstacles to generate
+        }
+        
+        for (let i = 0; i < numObstacles; i++) {
+            let validPosition = false;
+            let attempts = 0;
+            let newObstacle;
+            
+            // Try to find a valid position that doesn't overlap with existing obstacles
+            while (!validPosition && attempts < maxAttempts) {
+                attempts++;
+                
+                // Random position within the level boundaries (upper 60% of screen)
+                const x = Math.random() * (canvasWidth - 100) + 50; // 50px margin from edges
+                const y = Math.random() * (canvasHeight * 0.6) + 100; // Upper part of screen
+                
+                // Random size (within reasonable limits)
+                const width = 30 + Math.random() * 50;
+                const height = 20 + Math.random() * 30;
+                
+                newObstacle = {
+                    x,
+                    y,
+                    width,
+                    height
+                };
+                
+                // Check if this position is valid (not too close to other obstacles or player safe zone)
+                validPosition = this.isValidObstaclePosition(newObstacle, minDistance, playerSafeZone);
+            }
+            
+            // If we found a valid position, add the obstacle
+            if (validPosition) {
+                this.obstacles.push(newObstacle);
+                console.log(`Added obstacle at (${Math.round(newObstacle.x)}, ${Math.round(newObstacle.y)})`);
+            } else {
+                console.log(`Could not place obstacle ${i+1} after ${maxAttempts} attempts`);
+            }
+        }
+    }
+    
+    isValidObstaclePosition(newObstacle, minDistance, playerSafeZone) {
+        // Check if obstacle overlaps with player safe zone
+        if (this.checkOverlap(newObstacle, playerSafeZone)) {
+            return false;
+        }
+        
+        // Check distance from all existing obstacles
+        for (const obstacle of this.obstacles) {
+            // Calculate the minimum required distance between these two obstacles
+            const requiredDistance = minDistance + 
+                Math.max(obstacle.width, obstacle.height) / 2 + 
+                Math.max(newObstacle.width, newObstacle.height) / 2;
+            
+            // Check if obstacles are too close
+            const centerDist = Math.sqrt(
+                Math.pow(obstacle.x + obstacle.width/2 - (newObstacle.x + newObstacle.width/2), 2) +
+                Math.pow(obstacle.y + obstacle.height/2 - (newObstacle.y + newObstacle.height/2), 2)
+            );
+            
+            if (centerDist < requiredDistance) {
+                return false;
+            }
+            
+            // Also check for direct overlap
+            if (this.checkOverlap(newObstacle, obstacle)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    checkOverlap(rect1, rect2) {
+        return (
+            rect1.x < rect2.x + rect2.width &&
+            rect1.x + rect1.width > rect2.x &&
+            rect1.y < rect2.y + rect2.height &&
+            rect1.y + rect1.height > rect2.y
+        );
+    }
+    
+    isValidPowerUpPosition(powerUpHitbox) {
+        // Check if this position overlaps with any obstacle
+        for (const obstacle of this.obstacles) {
+            if (this.checkOverlap(powerUpHitbox, obstacle)) {
+                return false; // Invalid position - overlaps with obstacle
+            }
+        }
+        
+        // Check if this position overlaps with any existing power-up
+        const minPowerUpDistance = 40; // Minimum distance between power-ups
+        for (const powerUp of this.powerUps) {
+            // Create hitbox for existing power-up
+            const existingPowerUpHitbox = {
+                x: powerUp.x - powerUp.width/2,
+                y: powerUp.y - powerUp.height/2,
+                width: powerUp.width,
+                height: powerUp.height
+            };
+            
+            // Check for direct overlap
+            if (this.checkOverlap(powerUpHitbox, existingPowerUpHitbox)) {
+                return false; // Invalid position - overlaps with existing power-up
+            }
+            
+            // Also check for minimum distance between power-ups
+            const centerDistX = Math.abs((powerUpHitbox.x + powerUpHitbox.width/2) - (existingPowerUpHitbox.x + existingPowerUpHitbox.width/2));
+            const centerDistY = Math.abs((powerUpHitbox.y + powerUpHitbox.height/2) - (existingPowerUpHitbox.y + existingPowerUpHitbox.height/2));
+            const centerDist = Math.sqrt(centerDistX * centerDistX + centerDistY * centerDistY);
+            
+            if (centerDist < minPowerUpDistance) {
+                return false; // Invalid position - too close to existing power-up
+            }
+        }
+        
+        // Also check for overlap with player safe zone at the bottom
+        const playerSafeZone = {
+            x: this.game.canvas.width / 2 - 100,
+            y: this.game.canvas.height - 150,
+            width: 200,
+            height: 150
+        };
+        
+        if (this.checkOverlap(powerUpHitbox, playerSafeZone)) {
+            return false; // Invalid position - in player safe zone
+        }
+        
+        return true; // Valid position
+    }
+    
+    generatePowerUps() {
+        // Clear existing power-ups
+        this.powerUps = [];
+        
+        // TEMPORARY: For testing purposes, always spawn one of each power-up type in level 1
+        if (this.currentLevel === 1) {
+            const margin = 50;
+            const canvasWidth = this.game.canvas.width;
+            const powerUpTypes = Object.keys(CONFIG.POWERUP.TYPES);
+            
+            // Spawn each power-up type at different positions
+            for (let i = 0; i < powerUpTypes.length; i++) {
+                const type = powerUpTypes[i];
+                let x = margin + (canvasWidth - 2 * margin) * (i / (powerUpTypes.length - 1));
+                let y = 100 + i * 50; // Stagger vertically
+                
+                // Create a temporary power-up hitbox to check for collisions
+                const powerUpSize = 30; // Standard power-up size
+                const powerUpHitbox = {
+                    x: x - powerUpSize/2,
+                    y: y - powerUpSize/2,
+                    width: powerUpSize,
+                    height: powerUpSize
+                };
+                
+                // Check if this position overlaps with any obstacle
+                let validPosition = this.isValidPowerUpPosition(powerUpHitbox);
+                
+                // If position is invalid, try to find a nearby valid position
+                if (!validPosition) {
+                    // Try up to 10 alternative positions
+                    for (let attempt = 0; attempt < 10; attempt++) {
+                        // Try a position with some random offset
+                        const offsetX = (Math.random() - 0.5) * 100;
+                        const offsetY = (Math.random() - 0.5) * 100;
+                        
+                        x = Math.max(margin, Math.min(canvasWidth - margin, x + offsetX));
+                        y = Math.max(margin, Math.min(this.game.canvas.height * 0.6, y + offsetY));
+                        
+                        powerUpHitbox.x = x - powerUpSize/2;
+                        powerUpHitbox.y = y - powerUpSize/2;
+                        
+                        if (this.isValidPowerUpPosition(powerUpHitbox)) {
+                            validPosition = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Only spawn if we found a valid position
+                if (validPosition) {
+                    const powerUp = this.game.spawnPowerUp(x, y, type);
+                    this.powerUps.push(powerUp);
+                    console.log(`TEST: Spawned ${type} power-up at (${Math.round(x)}, ${Math.round(y)})`);
+                } else {
+                    console.log(`Could not find valid position for ${type} power-up`);
+                }
+            }
+            
+            return; // Skip normal power-up generation
+        }
+        
+        // Normal power-up generation for all levels
+        // Get the number of power-ups for this level from the config
+        const powerUpCounts = CONFIG.LEVEL.POWERUP_COUNTS;
+        let numPowerUps;
+        
+        // Use the appropriate count from the array, or the last value for higher levels
+        if (this.currentLevel <= powerUpCounts.length) {
+            numPowerUps = powerUpCounts[this.currentLevel - 1];
+        } else {
+            // For levels beyond the array, use the last value
+            numPowerUps = powerUpCounts[powerUpCounts.length - 1];
+        }
+        
+        // Generate power-ups
+        for (let i = 0; i < numPowerUps; i++) {
+            // Maximum attempts to place a power-up
+            const maxAttempts = 15;
+            let validPosition = false;
+            let x, y, powerUpHitbox;
+            const powerUpSize = 30; // Standard power-up size
+            
+            // Try to find a valid position
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                // Random position within the level (away from edges and player start position)
+                const margin = 50;
+                x = margin + Math.random() * (this.game.canvas.width - 2 * margin);
+                y = margin + Math.random() * (this.game.canvas.height * 0.6); // Upper 60% of screen
+                
+                // Create a temporary power-up hitbox to check for collisions
+                powerUpHitbox = {
+                    x: x - powerUpSize/2,
+                    y: y - powerUpSize/2,
+                    width: powerUpSize,
+                    height: powerUpSize
+                };
+                
+                // Check if this position is valid
+                if (this.isValidPowerUpPosition(powerUpHitbox)) {
+                    validPosition = true;
+                    break;
+                }
+            }
+            
+            // Only spawn if we found a valid position
+            if (validPosition) {
+                // Select power-up type based on spawn weights
+                const type = this.getRandomPowerUpType();
+                
+                // Spawn the power-up
+                const powerUp = this.game.spawnPowerUp(x, y, type);
+                this.powerUps.push(powerUp);
+            } else {
+                console.log(`Could not find valid position for power-up ${i+1}`);
+            }
+        }
+    }
+    
+    getRandomPowerUpType() {
+        // Get power-up types and their spawn weights from config
+        const powerUpTypes = Object.keys(CONFIG.POWERUP.TYPES);
+        const weights = powerUpTypes.map(type => CONFIG.POWERUP.TYPES[type].SPAWN_WEIGHT);
+        
+        // Calculate total weight
+        const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+        
+        // Generate random number between 0 and totalWeight
+        let random = Math.random() * totalWeight;
+        
+        // Find the power-up type based on the random number
+        for (let i = 0; i < powerUpTypes.length; i++) {
+            random -= weights[i];
+            if (random <= 0) {
+                return powerUpTypes[i];
+            }
+        }
+        
+        // Fallback to first power-up type
+        return powerUpTypes[0];
+    }
+    
+    generateBackgroundElements() {
+        // Number of background elements
+        const numElements = 10 + this.currentLevel * 2;
+        
+        for (let i = 0; i < numElements; i++) {
+            // Random position
+            const x = Math.random() * this.game.canvas.width;
+            const y = Math.random() * this.game.canvas.height;
+            
+            // Random size
+            const width = 5 + Math.random() * 15;
+            const height = 5 + Math.random() * 15;
+            
+            // Random color (dark shades for background)
+            const color = this.getRandomDarkColor();
+            
+            this.backgroundElements.push({
+                x,
+                y,
+                width,
+                height,
+                color
+            });
+        }
+    }
+    
+    getRandomDarkColor() {
+        // Generate dark colors for background elements
+        const r = Math.floor(Math.random() * 100);
+        const g = Math.floor(Math.random() * 100);
+        const b = Math.floor(Math.random() * 100);
+        return `rgb(${r}, ${g}, ${b})`;
+    }
+    
+    onLevelComplete() {
+        console.log(`Level ${this.currentLevel} complete!`);
+        
+        // Clear all enemy projectiles to prevent damage between levels
+        this.clearEnemyProjectiles();
+        
+        // Make player invulnerable between levels
+        this.game.player.makeInvulnerable(3.5); // Slightly longer than the level transition
+        
+        // Lock player movement during level transition
+        if (this.game.player) {
+            this.game.player.isMovementLocked = true;
+            console.log('Player movement locked for level transition');
+            
+            // Unlock player movement after level generation (with a small delay)
+            setTimeout(() => {
+                if (this.game.player) {
+                    this.game.player.isMovementLocked = false;
+                    console.log('Player movement unlocked after level transition');
+                }
+            }, 3200); // Slightly longer than the level transition
+        }
+        
+        // Show level complete message
+        this.showLevelCompleteMessage();
+        
+        // Proceed to next level after a delay
+        setTimeout(() => {
+            this.generate(this.currentLevel + 1);
+        }, 3000);
+    }
+    
+    clearEnemyProjectiles() {
+        // Remove all enemy projectiles from the game
+        for (let i = this.game.projectiles.length - 1; i >= 0; i--) {
+            const projectile = this.game.projectiles[i];
+            
+            // Only remove enemy projectiles (not player projectiles)
+            if (!projectile.isPlayerProjectile) {
+                projectile.isDead = true;
+                
+                // Also remove from entities array
+                const entityIndex = this.game.entities.indexOf(projectile);
+                if (entityIndex !== -1) {
+                    this.game.entities.splice(entityIndex, 1);
+                }
+                
+                // Remove from projectiles array
+                this.game.projectiles.splice(i, 1);
+            }
+        }
+    }
+    
+    showLevelCompleteMessage() {
+        // Create level complete overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'level-complete-overlay';
+        overlay.style.position = 'absolute';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.display = 'flex';
+        overlay.style.flexDirection = 'column';
+        overlay.style.justifyContent = 'center';
+        overlay.style.alignItems = 'center';
+        overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        overlay.style.zIndex = '5';
+        overlay.style.color = '#fff';
+        overlay.style.fontFamily = 'Arial, sans-serif';
+        
+        // Level complete text
+        const title = document.createElement('h2');
+        title.textContent = `LEVEL ${this.currentLevel} COMPLETE!`;
+        title.style.fontSize = '28px';
+        title.style.color = '#ffcc00';
+        title.style.marginBottom = '20px';
+        title.style.textShadow = '2px 2px 4px #000';
+        
+        // Next level text
+        const nextLevel = document.createElement('p');
+        nextLevel.textContent = `LEVEL ${this.currentLevel + 1} STARTING SOON...`;
+        nextLevel.style.fontSize = '20px';
+        nextLevel.style.marginBottom = '30px';
+        
+        // Add elements to overlay
+        overlay.appendChild(title);
+        overlay.appendChild(nextLevel);
+        
+        // Add overlay to game container
+        document.getElementById('game-container').appendChild(overlay);
+        
+        // Remove overlay after delay
+        setTimeout(() => {
+            document.getElementById('game-container').removeChild(overlay);
+        }, 2900); // Remove just before next level starts
+    }
+}
+
+/**
+ * UI Utilities for Chicken Shooter
+ * Contains reusable functions for creating game overlays and UI elements
+ */
+
+/**
+ * Creates a game overlay (start screen, pause screen, game over screen)
+ * @param {Object} options - Configuration options for the overlay
+ * @param {string} options.id - ID for the overlay element
+ * @param {string} options.title - Main title text
+ * @param {string} options.titleColor - Color for the title (hex code)
+ * @param {string} [options.subtitle] - Optional subtitle text
+ * @param {string} [options.subtitleColor='#fff'] - Color for the subtitle
+ * @param {Object[]} [options.buttons] - Array of button configurations
+ * @param {string} options.buttons[].text - Button text
+ * @param {Function} options.buttons[].onClick - Click handler for the button
+ * @param {string} [options.buttons[].bgColor='#ffcc00'] - Button background color
+ * @param {string} [options.backgroundColor='rgba(0, 0, 0, 0.7)'] - Overlay background color
+ * @returns {HTMLElement} - The created overlay element
+ */
+function createGameOverlay(options) {
+    // Create overlay container
+    const overlay = document.createElement('div');
+    overlay.id = options.id;
+    overlay.style.position = 'absolute';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.display = 'flex';
+    overlay.style.flexDirection = 'column';
+    overlay.style.justifyContent = 'center';
+    overlay.style.alignItems = 'center';
+    overlay.style.backgroundColor = options.backgroundColor || 'rgba(0, 0, 0, 0.7)';
+    overlay.style.zIndex = '10';
+    
+    // Create title
+    const title = document.createElement('h1');
+    title.textContent = options.title;
+    title.style.color = options.titleColor;
+    title.style.fontFamily = 'Arial, sans-serif';
+    title.style.fontSize = '36px';
+    title.style.marginBottom = '20px';
+    title.style.textShadow = '2px 2px 4px #000';
+    overlay.appendChild(title);
+    
+    // Create subtitle if provided
+    if (options.subtitle) {
+        const subtitle = document.createElement('p');
+        subtitle.textContent = options.subtitle;
+        subtitle.style.color = options.subtitleColor || '#fff';
+        subtitle.style.fontFamily = 'Arial, sans-serif';
+        subtitle.style.fontSize = '18px';
+        subtitle.style.marginBottom = '40px';
+        overlay.appendChild(subtitle);
+    }
+    
+    // Create buttons if provided
+    if (options.buttons && options.buttons.length > 0) {
+        options.buttons.forEach(buttonConfig => {
+            const button = document.createElement('button');
+            button.textContent = buttonConfig.text;
+            button.style.padding = '15px 30px';
+            button.style.fontSize = '20px';
+            button.style.backgroundColor = buttonConfig.bgColor || '#ffcc00';
+            button.style.color = '#000';
+            button.style.border = 'none';
+            button.style.borderRadius = '5px';
+            button.style.cursor = 'pointer';
+            button.style.fontWeight = 'bold';
+            button.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.3)';
+            button.style.marginBottom = '10px';
+            
+            // Add hover effects
+            button.addEventListener('mouseover', () => {
+                button.style.backgroundColor = buttonConfig.hoverColor || '#ffd700';
+                button.style.transform = 'scale(1.05)';
+            });
+            
+            button.addEventListener('mouseout', () => {
+                button.style.backgroundColor = buttonConfig.bgColor || '#ffcc00';
+                button.style.transform = 'scale(1)';
+            });
+            
+            // Add click handler
+            button.addEventListener('click', buttonConfig.onClick);
+            
+            overlay.appendChild(button);
+        });
+    }
+    
+    return overlay;
+}
+
+// Make function globally available
+window.createGameOverlay = createGameOverlay;
+
+/**
+ * Main entry point for the Chicken Shooter game
+ * Initializes the game and handles the start screen
+ */
+
+// UI utilities are loaded from ui-utils.js
+
+// Wait for DOM to be fully loaded before initializing
+document.addEventListener('DOMContentLoaded', () => {
+    // Create game instance
+    const game = new Game('game-canvas');
+    
+    // Show start screen
+    showStartScreen(game);
+});
+
+/**
+ * Shows the start screen with game title and start button
+ */
+function showStartScreen(game) {
+    // Use the reusable overlay function to create the start screen
+    const startScreen = createGameOverlay({
+        id: 'start-screen',
+        title: 'CHICKEN SHOOTER',
+        titleColor: '#ffcc00',
+        subtitle: 'Escape from the Farm Lab!',
+        subtitleColor: '#fff',
+        buttons: [
+            {
+                text: 'START GAME',
+                bgColor: '#ffcc00',
+                hoverColor: '#ffd700',
+                onClick: () => {
+                    // Remove start screen
+                    document.getElementById('game-container').removeChild(startScreen);
+                    
+                    // Initialize and start the game
+                    game.init();
+                }
+            }
+        ]
+    });
+    
+    // Add start screen to game container
+    document.getElementById('game-container').appendChild(startScreen);
+}
+
+/**
+ * Shows the game over screen with score and restart button
+ */
+function showGameOverScreen(game, score) {
+    // Use the reusable overlay function to create the game over screen
+    const gameOverScreen = createGameOverlay({
+        id: 'game-over-screen',
+        title: 'GAME OVER',
+        titleColor: '#ff0000',
+        subtitle: `Your Score: ${score}`,
+        subtitleColor: '#fff',
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        buttons: [
+            {
+                text: 'PLAY AGAIN',
+                bgColor: '#ffcc00',
+                hoverColor: '#ffd700',
+                onClick: () => {
+                    // Remove game over screen
+                    document.getElementById('game-container').removeChild(gameOverScreen);
+                    
+                    // Initialize and start a new game
+                    const newGame = new Game('game-canvas');
+                    newGame.init();
+                }
+            }
+        ]
+    });
+    
+    // Add game over screen to game container
+    document.getElementById('game-container').appendChild(gameOverScreen);
+}
+
+// Extend the Game class to handle game over
+Game.prototype.gameOver = function() {
+    console.log('Game Over!');
+    this.isRunning = false;
+    
+    // Show game over screen with final score
+    showGameOverScreen(this, this.score);
+};
+
+
+</script>
+</body>
+</html>
+</html>

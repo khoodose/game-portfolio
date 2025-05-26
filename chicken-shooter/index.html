@@ -355,48 +355,53 @@ class Game {
     togglePause() {
         this.isPaused = !this.isPaused;
         
-        // Get or create pause overlay
-        let pauseOverlay = document.getElementById('pause-overlay');
-        
         if (this.isPaused) {
-            // If paused and overlay doesn't exist, create it
-            if (!pauseOverlay) {
-                this.createPauseOverlay();
-            } else {
-                // Show existing overlay
-                pauseOverlay.style.display = 'flex';
-            }
-            // Draw the pause button with the play icon
-            this.drawPauseButton();
+            // Draw the pause screen immediately
+            this.drawPauseScreen();
         } else {
-            // Hide the overlay when resuming
-            if (pauseOverlay) {
-                pauseOverlay.style.display = 'none';
-            }
             // Resume the game loop
             this.lastTime = performance.now();
             requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
         }
     }
     
-    createPauseOverlay() {
-        // Use the reusable overlay function to create the pause screen
-        const pauseOverlay = createGameOverlay({
-            id: 'pause-overlay',
-            title: 'GAME PAUSED',
-            titleColor: '#ffffff',
-            subtitle: 'Click ▶️ to resume',
-            subtitleColor: '#ffffff',
-            backgroundColor: 'rgba(0, 0, 0, 0.7)'
-            // No buttons needed as the pause button handles resuming
-        });
+    drawPauseScreen() {
+        // Clear the canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        // Add the overlay to the game container
-        document.getElementById('game-container').appendChild(pauseOverlay);
+        // Draw the game state first (so we can see the game behind the overlay)
+        this.draw();
+        
+        // Draw semi-transparent overlay
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Draw pause text
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = '36px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText('GAME PAUSED', this.canvas.width / 2, this.canvas.height / 2 - 30);
+        
+        this.ctx.font = '18px Arial';
+        this.ctx.fillText('Click ▶️ to resume', this.canvas.width / 2, this.canvas.height / 2 + 20);
+        
+        // Reset text alignment for other UI elements
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'alphabetic';
+        
+        // Draw the pause button (which will now show the play icon)
+        this.drawPauseButton();
     }
     
     gameLoop(timestamp) {
         if (this.isPaused) {
+            // If the game is paused, redraw the pause screen to ensure it stays visible
+            this.drawPauseScreen();
+            // Continue the game loop even when paused, but don't update game state
+            if (this.isRunning) {
+                requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
+            }
             return;
         }
         
@@ -1372,7 +1377,7 @@ class Enemy {
         this.targetY = 0;
         this.movementTimer = 0;
         this.lifespan = 0;
-        this.maxLifespan = 30; // seconds before auto-removal
+        // No maxLifespan here - defined below to avoid duplication
         
         // Add obstacle avoidance state
         this.isAvoidingObstacle = false;
@@ -1399,8 +1404,8 @@ class Enemy {
         
         // Add a lifespan counter to track how long the enemy has been alive
         this.lifespan = 0;
-        // Add a max lifespan to prevent enemies from living forever if they get stuck
-        this.maxLifespan = 120; // 2 minutes in seconds
+        // TEMPORARY TEST VALUE - change back to 180 after testing
+        this.maxLifespan = 10; // 10 seconds for testing timeout functionality
         
         // Visual feedback properties
         this.isFlashing = false;
@@ -1481,6 +1486,8 @@ class Enemy {
         // Check if enemy has been alive too long - this might be causing the disappearing enemies
         if (this.lifespan > this.maxLifespan) {
             console.log(`Enemy ${this.type} reached max lifespan of ${this.maxLifespan}s and is being removed`);
+            // Show timeout text before removing
+            this.showTimeoutText();
             this.isDead = true;
             return;
         }
@@ -2021,6 +2028,52 @@ class Enemy {
                 requestAnimationFrame(animateText);
             } else {
                 document.getElementById('game-container').removeChild(damageText);
+            }
+        };
+        
+        requestAnimationFrame(animateText);
+    }
+    
+    showTimeoutText() {
+        // Create floating timeout text
+        const timeoutText = document.createElement('div');
+        timeoutText.textContent = 'Time Out!';
+        timeoutText.style.position = 'absolute';
+        timeoutText.style.color = '#ffcc00'; // Yellow color to distinguish from damage
+        timeoutText.style.fontSize = '18px';
+        timeoutText.style.fontWeight = 'bold';
+        timeoutText.style.textShadow = '1px 1px 2px #000';
+        
+        // Get canvas position
+        const canvas = this.game.canvas;
+        const canvasRect = canvas.getBoundingClientRect();
+        
+        // Position text at enemy's position relative to canvas
+        const xPos = canvasRect.left + this.x + this.width / 2 - 30; // Offset for wider text
+        const yPos = canvasRect.top + this.y - 10;
+        
+        timeoutText.style.left = `${xPos}px`;
+        timeoutText.style.top = `${yPos}px`;
+        timeoutText.style.zIndex = '5';
+        timeoutText.style.pointerEvents = 'none'; // Don't block clicks
+        
+        // Add to game container
+        document.getElementById('game-container').appendChild(timeoutText);
+        
+        // Animate and remove after a delay
+        let opacity = 1;
+        let posY = yPos; // Use the calculated position for animation
+        
+        const animateText = () => {
+            opacity -= 0.015; // Slightly slower fade for better visibility
+            posY -= 1;
+            timeoutText.style.opacity = opacity;
+            timeoutText.style.top = `${posY}px`;
+            
+            if (opacity > 0) {
+                requestAnimationFrame(animateText);
+            } else {
+                document.getElementById('game-container').removeChild(timeoutText);
             }
         };
         

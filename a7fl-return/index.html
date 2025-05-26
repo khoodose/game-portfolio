@@ -45,21 +45,7 @@
         overscroll-behavior: none;
       }
 
-      .stats {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        color: white;
-        font-size: 14px;
-        z-index: 10;
-        background-color: rgba(0,0,0,0.5);
-        padding: 4px 8px;
-        border-radius: 5px;
-        max-width: 100px;
-        max-height: 30px;
-        display: flex;
-        align-items: center;
-      }
+      /* Stats display is now drawn directly on canvas */
 
       .restart-btn {
         position: absolute;
@@ -146,7 +132,6 @@
     <div id="game-container">
       <canvas id="gameCanvas"></canvas>
     </div>
-    <div class="stats" id="statsDisplay">Touchdowns: 0</div>
     <div id="touchIndicator"></div>
     <div id="joystickKnob"></div>
     
@@ -162,7 +147,7 @@
       // Game initialization and constants
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d", { alpha: false });
-      const statsDisplay = document.getElementById("statsDisplay");
+      // Touchdowns counter is now drawn directly on canvas
       const touchIndicator = document.getElementById("touchIndicator");
       const joystickKnob = document.getElementById("joystickKnob");
       const instructionsOverlay = document.getElementById("instructionsOverlay");
@@ -606,7 +591,7 @@
         ball.kickArc.frequency = 3 + Math.random() * 2;
         ball.kickArc.startFrame = frameCount;
         
-        updateStats();
+        // Touchdowns counter is now drawn directly on canvas
       }
 
       // Game state updates
@@ -840,7 +825,7 @@
       // Game events
       function onTouchdown() {
         touchdowns++;
-        updateStats();
+        // Touchdowns counter is now drawn directly on canvas
         
         // Provide feedback
         if (window.FarcadeSDK) window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
@@ -868,10 +853,6 @@
         }
       }
 
-      function updateStats() {
-        statsDisplay.innerText = `Touchdowns: ${touchdowns}`;
-      }
-
       // Rendering
       function render() {
         // Clear with proper sizing
@@ -883,6 +864,14 @@
         
         // Draw field
         drawField();
+        
+        // Draw touchdowns counter directly on canvas
+        ctx.save();
+        ctx.fillStyle = 'white';
+        ctx.font = '16px Arial, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Touchdowns: ${touchdowns}`, 20, 30);
+        ctx.restore();
         
         // Draw ball if not caught
         if (!ball.caught) {

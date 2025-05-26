@@ -1404,8 +1404,8 @@ class Enemy {
         
         // Add a lifespan counter to track how long the enemy has been alive
         this.lifespan = 0;
-        // TEMPORARY TEST VALUE - change back to 180 after testing
-        this.maxLifespan = 10; // 10 seconds for testing timeout functionality
+        // Add a max lifespan to prevent enemies from living forever if they get stuck
+        this.maxLifespan = 150; // 2.5 minutes in seconds - failsafe mechanism
         
         // Visual feedback properties
         this.isFlashing = false;

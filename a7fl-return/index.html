@@ -25,11 +25,22 @@
         font-family: Clarendon, Rockwell, Impact, Georgia, serif;
       }
 
+      #game-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      
       canvas {
         display: block;
         background-color: var(--field-color);
-        width: 100vw;
-        height: 100vh;
+        position: absolute;
         touch-action: none;
         overscroll-behavior: none;
       }
@@ -132,7 +143,9 @@
     </style>
   </head>
   <body>
-    <canvas id="gameCanvas"></canvas>
+    <div id="game-container">
+      <canvas id="gameCanvas"></canvas>
+    </div>
     <div class="stats" id="statsDisplay">Touchdowns: 0</div>
     <div id="touchIndicator"></div>
     <div id="joystickKnob"></div>
@@ -238,6 +251,23 @@
         // Since the Farcade URL already includes the filename, we ignore the filename parameter for remote assets
         return CONFIG.assets.useLocalAssets ? CONFIG.assets.localPath : CONFIG.assets.remotePath;
       }
+      
+      // Cache for canvas dimensions
+      let cachedCanvasDimensions = { width: 0, height: 0 };
+      
+      // Helper function to get canvas dimensions
+      function getCanvasDimensions() {
+        return cachedCanvasDimensions;
+      }
+      
+      // Function to update cached dimensions
+      function updateCanvasDimensions() {
+        const dpr = window.devicePixelRatio || 1;
+        cachedCanvasDimensions.width = canvas.width / dpr;
+        cachedCanvasDimensions.height = canvas.height / dpr;
+      }
+      
+
 
       // Performance optimizations
       let lastFrameTime = 0;
@@ -323,28 +353,68 @@
 
       // Canvas handling
       function resizeCanvas() {
+        // Always maintain a mobile-like aspect ratio regardless of device
+        const aspectRatio = 9/16; // Common mobile aspect ratio (width/height)
+        
+        // Get container dimensions
+        const container = document.getElementById("game-container");
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        
+        // Calculate dimensions that maintain aspect ratio and fit within container
+        let canvasWidth, canvasHeight;
+        
+        // If container is wider than it is tall (landscape orientation)
+        if (containerWidth / containerHeight > aspectRatio) {
+          // Height is the limiting factor
+          canvasHeight = Math.min(containerHeight, 800); // Cap at 800px height
+          canvasWidth = canvasHeight * aspectRatio;
+        } else {
+          // Width is the limiting factor
+          canvasWidth = containerWidth;
+          canvasHeight = canvasWidth / aspectRatio;
+        }
+        
         // Get the device pixel ratio
         const dpr = window.devicePixelRatio || 1;
         
+        // Reset the context transform first to avoid cumulative scaling
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        
         // Set canvas dimensions accounting for pixel ratio
-        canvas.width = window.innerWidth * dpr;
-        canvas.height = window.innerHeight * dpr;
+        canvas.width = canvasWidth * dpr;
+        canvas.height = canvasHeight * dpr;
         
         // Scale the context to ensure correct drawing operations
         ctx.scale(dpr, dpr);
         
+        // Update cached dimensions
+        updateCanvasDimensions();
+        
         // Set CSS size
-        canvas.style.width = window.innerWidth + 'px';
-        canvas.style.height = window.innerHeight + 'px';
+        canvas.style.width = canvasWidth + 'px';
+        canvas.style.height = canvasHeight + 'px';
+        
+        // Position the canvas in the center of the container
+        canvas.style.position = 'absolute';
+        canvas.style.left = '50%';
+        canvas.style.top = '50%';
+        canvas.style.transform = 'translate(-50%, -50%)';
         
         // Update field dimensions
-        CONFIG.fieldBottom = window.innerHeight;
+        CONFIG.fieldBottom = canvasHeight;
+        CONFIG.endZoneTop = canvasHeight * 0.1; // 10% of height for end zone
+        
+
+        
+
         
         // Only reposition objects if the game has started and we have valid objects
         if (gameState === GAME_STATE.PLAYING) {
           // Calculate the visible field dimensions
-          const fieldWidth = window.innerWidth;
-          const fieldHeight = window.innerHeight;
+          const dimensions = getCanvasDimensions();
+          const fieldWidth = dimensions.width;
+          const fieldHeight = dimensions.height;
           
           // Ensure player stays within the visible area
           if (player && player.x > 0 && player.y > 0) {
@@ -487,8 +557,8 @@
       function resetGame() {
         // Reset player position - ensure it's in the visible area
         // Position player at the bottom of the field, above the end zone
-        player.x = window.innerWidth / 2;
-        player.y = window.innerHeight - 75;
+        player.x = getCanvasDimensions().width / 2;
+        player.y = getCanvasDimensions().height - 75;
         
         // Reset player direction to face the viewer
         SPRITES.player.currentDirection = 'down';
@@ -496,7 +566,7 @@
         // Reset defenders - position them in a row in the upper part of the field
         // Make sure they're all visible at 100% zoom
         defenders = [];
-        const defenderY = window.innerHeight * 0.2;
+        const defenderY = getCanvasDimensions().height * 0.2;
         
         // Calculate positions to ensure all defenders are visible
         // Use percentages that keep them within the visible area
@@ -504,7 +574,7 @@
         
         for (let i = 0; i < 3; i++) {
           defenders.push({
-            x: window.innerWidth * positions[i],
+            x: getCanvasDimensions().width * positions[i],
             y: defenderY,
             width: CONFIG.defenderSize * 2,     // Increased width for better sprite visibility
             height: CONFIG.defenderSize * 2.5,  // Increased height for better sprite visibility
@@ -620,20 +690,20 @@
         ball.y += ball.speedY * deltaTime / (1000/60);
         
         // Handle ball bouncing off edges
-        if (ball.x < 0 || ball.x > window.innerWidth) {
+        if (ball.x < 0 || ball.x > getCanvasDimensions().width) {
           ball.speedX *= -0.8; // Reduced bounce energy
-          ball.x = ball.x < 0 ? 0 : window.innerWidth;
+          ball.x = ball.x < 0 ? 0 : getCanvasDimensions().width;
         }
         
         // Handle ball hitting the ground
-        if (ball.y > window.innerHeight - 50 - ball.height/2) {
+        if (ball.y > getCanvasDimensions().height - 50 - ball.height/2) {
           // More realistic bounce - reduce the bounce height significantly
           // and add some randomness to the direction
           
           // Only bounce if the ball has enough energy
           if (Math.abs(ball.speedY) > 1) {
             // Calculate max bounce height (10% of field height from bottom)
-            const maxBounceHeight = window.innerHeight * 0.1;
+            const maxBounceHeight = getCanvasDimensions().height * 0.1;
             // Convert desired height to velocity using physics formula v = sqrt(2gh)
             // where g is gravity and h is height
             const maxBounceVelocity = Math.sqrt(2 * CONFIG.gravity * maxBounceHeight);
@@ -666,7 +736,7 @@
           }
           
           // Keep ball above ground
-          ball.y = window.innerHeight - 50 - ball.height/2;
+          ball.y = getCanvasDimensions().height - 50 - ball.height/2;
         }
         
         // Handle ball hitting top of field
@@ -694,7 +764,7 @@
         const moveSpeed = CONFIG.defenderBaseSpeed * (1 + CONFIG.speedBoostPerTD * touchdowns) * deltaTime / (1000/60);
         
         // Calculate the actual playing field height (excluding end zones)
-        const fieldHeight = window.innerHeight - 50 - CONFIG.endZoneTop;
+        const fieldHeight = getCanvasDimensions().height - 50 - CONFIG.endZoneTop;
         
         defenders.forEach(defender => {
           if (!ball.caught) {
@@ -870,49 +940,49 @@
       function drawField() {
         // Draw field background
         ctx.fillStyle = "var(--field-color)";
-        ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+        ctx.fillRect(0, 0, getCanvasDimensions().width, getCanvasDimensions().height);
         
         // Draw top end zone (lighter color)
         ctx.fillStyle = "#0d6621";
-        ctx.fillRect(0, 0, window.innerWidth, CONFIG.endZoneTop);
+        ctx.fillRect(0, 0, getCanvasDimensions().width, CONFIG.endZoneTop);
         
         // Draw bottom end zone (lighter color)
         ctx.fillStyle = "#0d6621";
-        ctx.fillRect(0, window.innerHeight - 50, window.innerWidth, 50);
+        ctx.fillRect(0, getCanvasDimensions().height - 50, getCanvasDimensions().width, 50);
         
         // Draw end zone lines
         ctx.strokeStyle = "white";
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(0, CONFIG.endZoneTop);
-        ctx.lineTo(window.innerWidth, CONFIG.endZoneTop);
+        ctx.lineTo(getCanvasDimensions().width, CONFIG.endZoneTop);
         ctx.stroke();
         
         ctx.beginPath();
-        ctx.moveTo(0, window.innerHeight - 50);
-        ctx.lineTo(window.innerWidth, window.innerHeight - 50);
+        ctx.moveTo(0, getCanvasDimensions().height - 50);
+        ctx.lineTo(getCanvasDimensions().width, getCanvasDimensions().height - 50);
         ctx.stroke();
         
         // Draw field labels
         ctx.fillStyle = "white";
         ctx.font = "20px Clarendon, Rockwell, Impact, Georgia, serif";
         ctx.textAlign = "center";
-        ctx.fillText("A7FL.com 3 on 1 Throw-off Return", window.innerWidth/2, window.innerHeight - 25);
-        ctx.fillText("END ZONE", window.innerWidth/2, 30);
+        ctx.fillText("A7FL.com 3 on 1 Throw-off Return", getCanvasDimensions().width/2, getCanvasDimensions().height - 25);
+        ctx.fillText("END ZONE", getCanvasDimensions().width/2, 30);
         
         // Yard lines for visual effect
         ctx.strokeStyle = "rgba(255,255,255,0.3)";
         ctx.lineWidth = 2;
         
         const yardLineCount = 10;
-        const fieldHeight = window.innerHeight - 50 - CONFIG.endZoneTop;
+        const fieldHeight = getCanvasDimensions().height - 50 - CONFIG.endZoneTop;
         const spacing = fieldHeight / yardLineCount;
         
         for (let i = 1; i < yardLineCount; i++) {
           const y = CONFIG.endZoneTop + spacing * i;
           ctx.beginPath();
           ctx.moveTo(0, y);
-          ctx.lineTo(window.innerWidth, y);
+          ctx.lineTo(getCanvasDimensions().width, y);
           ctx.stroke();
         }
         
@@ -921,8 +991,8 @@
         ctx.lineWidth = 2;
         
         // Add two sets of hash marks - one third from each side
-        const leftHashX = window.innerWidth * 0.25;
-        const rightHashX = window.innerWidth * 0.75;
+        const leftHashX = getCanvasDimensions().width * 0.25;
+        const rightHashX = getCanvasDimensions().width * 0.75;
         const hashHeight = 15; // Height of each hash mark
         
         // Draw hash marks every 5 yards
@@ -930,7 +1000,7 @@
         
         for (let i = 0; i <= yardLineCount * 2; i++) {
           const y = CONFIG.endZoneTop + hashMarkSpacing * i;
-          if (y >= window.innerHeight - 50) continue; // Don't draw beyond the field
+          if (y >= getCanvasDimensions().height - 50) continue; // Don't draw beyond the field
           
           // Left hash marks
           ctx.beginPath();
@@ -981,14 +1051,14 @@
         // Draw A7FL logo in the middle of the field
         if (a7flLogo.complete && a7flLogo.naturalWidth !== 0) {
           // Calculate responsive logo size based on screen width
-          const maxLogoWidth = Math.min(CONFIG.logo.width, window.innerWidth * 0.4); // Use window.innerWidth for consistency
+          const maxLogoWidth = Math.min(CONFIG.logo.width, getCanvasDimensions().width * 0.4); // Use getCanvasDimensions().width for consistency
           const aspectRatio = a7flLogo.naturalHeight / a7flLogo.naturalWidth;
           const responsiveLogoWidth = maxLogoWidth;
           const responsiveLogoHeight = responsiveLogoWidth * aspectRatio;
           
           // Position logo in the middle of the VISIBLE field (using window dimensions)
-          const logoX = (window.innerWidth - responsiveLogoWidth) / 2;
-          const logoY = (window.innerHeight - responsiveLogoHeight) / 2;
+          const logoX = (getCanvasDimensions().width - responsiveLogoWidth) / 2;
+          const logoY = (getCanvasDimensions().height - responsiveLogoHeight) / 2;
           
           // Save context state before drawing logo
           ctx.save();
@@ -1234,13 +1304,13 @@
       function drawTouchdownCelebration() {
         // Flash end zone
         ctx.fillStyle = `rgba(255, 204, 0, ${Math.sin(frameCount * 0.2) * 0.5 + 0.5})`;
-        ctx.fillRect(0, 0, window.innerWidth, CONFIG.endZoneTop);
+        ctx.fillRect(0, 0, getCanvasDimensions().width, CONFIG.endZoneTop);
         
         // Display celebration text
         ctx.fillStyle = "white";
         ctx.font = "40px Clarendon, Rockwell, Impact, Georgia, serif";
         ctx.textAlign = "center";
-        ctx.fillText("TOUCHDOWN!", window.innerWidth/2, CONFIG.endZoneTop/2);
+        ctx.fillText("TOUCHDOWN!", getCanvasDimensions().width/2, CONFIG.endZoneTop/2);
       }
 
       function drawTackleAnimation() {

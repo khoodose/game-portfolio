@@ -4,10 +4,17 @@
     <script src="https://unpkg.com/@farcade/game-sdk@latest/dist/index.min.js"></script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Football Kickoff Return Game</title>
+    <title>A7FL Football Kickoff Return Game</title>
     <style>
-      html,
-      body {
+      :root {
+        --field-color: #107d27;
+        --accent-color: #ffcc00;
+        --accent-active: #ff9900;
+        --joystick-color: rgba(255, 255, 255, 0.3);
+        --joystick-knob-color: rgba(255, 255, 255, 0.7);
+      }
+      
+      html, body {
         margin: 0;
         padding: 0;
         height: 100%;
@@ -15,11 +22,12 @@
         overflow: hidden;
         touch-action: none;
         overscroll-behavior: none;
+        font-family: Clarendon, Rockwell, Impact, Georgia, serif;
       }
 
       canvas {
         display: block;
-        background-color: #107d27;
+        background-color: var(--field-color);
         width: 100vw;
         height: 100vh;
         touch-action: none;
@@ -31,18 +39,23 @@
         top: 10px;
         left: 10px;
         color: white;
-        font-family: Clarendon, Rockwell, Impact, Georgia, serif;
         font-size: 14px;
         z-index: 10;
+        background-color: rgba(0,0,0,0.5);
+        padding: 4px 8px;
+        border-radius: 5px;
+        max-width: 100px;
+        max-height: 30px;
+        display: flex;
+        align-items: center;
       }
 
       .restart-btn {
-        font-family: Clarendon, Rockwell, Impact, Georgia, serif;
         position: absolute;
         bottom: 10px;
         left: 50%;
         transform: translateX(-50%);
-        background-color: #ffcc00;
+        background-color: var(--accent-color);
         border: none;
         padding: 12px 24px;
         font-size: 18px;
@@ -52,9 +65,25 @@
       }
 
       .restart-btn:active {
-        background-color: #ff9900;
+        background-color: var(--accent-active);
       }
 
+      #touchIndicator {
+        position: absolute;
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        border: 2px solid white;
+        pointer-events: none;
+        opacity: 0.5;
+        display: none;
+        z-index: 10;
+      }
+      
+      #joystickKnob {
+        display: none; /* Hide the joystick knob completely */
+      }
+      
       #instructionsOverlay {
         position: absolute;
         top: 0;
@@ -63,22 +92,38 @@
         bottom: 0;
         background: rgba(0, 0, 0, 0.8);
         color: white;
-        font-family: Clarendon, Rockwell, Impact, Georgia, serif;
         font-size: 20px;
         display: flex;
-        flex-direction: column;
         justify-content: center;
         align-items: center;
-        text-align: center;
-        z-index: 20;
-        padding: 0 20px;
       }
-
+      
+      .instructions-box {
+        background: rgba(0, 0, 0, 0.7);
+        border: 2px solid var(--accent-color);
+        border-radius: 10px;
+        padding: 25px;
+        max-width: 80%;
+        width: 300px;
+        text-align: left;
+        line-height: 1.5;
+      }
+      
+      .instructions-title {
+        font-size: 22px;
+        font-weight: bold;
+        margin-bottom: 15px;
+        color: var(--accent-color);
+      }
+      
+      .instructions-text {
+        margin-bottom: 20px;
+      }
+      
       #startButton {
-        font-family: Clarendon, Rockwell, Impact, Georgia, serif;
         margin-top: 20px;
         padding: 12px 24px;
-        background-color: #ffcc00;
+        background-color: var(--accent-color);
         border: none;
         font-size: 18px;
         cursor: pointer;
@@ -89,339 +134,1172 @@
   <body>
     <canvas id="gameCanvas"></canvas>
     <div class="stats" id="statsDisplay">Touchdowns: 0</div>
+    <div id="touchIndicator"></div>
+    <div id="joystickKnob"></div>
+    
+    <div id="instructionsOverlay">
+      <div class="instructions-box">
+        <div class="instructions-title">How to Play</div>
+        <div class="instructions-text">Grab the ball with the blue player, and run past the red defenders to score touchdowns. (Try different strategies to get around them.) <br><br> Use arrow keys or hold down and drag on mobile to control the player. <br><br> Defenders get a little faster with each score.</div>
+        <button id="startButton">Press Start</button>
+      </div>
+    </div>
 
     <script>
+      // Game initialization and constants
       const canvas = document.getElementById("gameCanvas");
-      const ctx = canvas.getContext("2d");
+      const ctx = canvas.getContext("2d", { alpha: false });
       const statsDisplay = document.getElementById("statsDisplay");
+      const touchIndicator = document.getElementById("touchIndicator");
+      const joystickKnob = document.getElementById("joystickKnob");
+      const instructionsOverlay = document.getElementById("instructionsOverlay");
+      const startButton = document.getElementById("startButton");
 
+      // Game assets
+      let playerSprite = new Image();
+      let defenderSprite = new Image();
+      let a7flLogo = new Image();
       let gameLoopStarted = false;
-      let gameOverHandled = false;
 
-      function resizeCanvas() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-      }
-      window.addEventListener("resize", resizeCanvas);
-      resizeCanvas();
-      window.addEventListener("load", resetGame);
+      // Global variables
+      let player, ball, defenders, gameState, frameCount, touchdowns, inputs, tacklePosition, tackleAnimationTime, tackleAnimationDuration;
 
-      const playerSize = 20;
-      const defenderSize = 20;
-      const ballSize = 15;
-      let gameRunning = true;
-
-      let playerX = canvas.width / 2,
-        playerY = canvas.height - 50;
-      let defenders = [];
-      let kickerIndex = 1;
-      let ballX = 0,
-        ballY = 0;
-      let ballCaught = false,
-        yardsGained = 0,
-        touchdowns = 0;
-      let ballSpeedY = 0,
-        ballSpeedX = 0;
-      let bounceCount = 0;
-      let bounceTimer = 0;
-      let kickArcAmplitude = 0,
-        kickArcFrequency = 0;
-      let kickStartFrame = 0;
-
-      let keys = { up: false, down: false, left: false, right: false };
-      let touchStartX = 0,
-        touchStartY = 0;
-      let frameCount = 0;
-
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "ArrowUp" || e.key === "w") keys.up = true;
-        if (e.key === "ArrowDown" || e.key === "s") keys.down = true;
-        if (e.key === "ArrowLeft" || e.key === "a") keys.left = true;
-        if (e.key === "ArrowRight" || e.key === "d") keys.right = true;
-      });
-
-      document.addEventListener("keyup", (e) => {
-        if (e.key === "ArrowUp" || e.key === "w") keys.up = false;
-        if (e.key === "ArrowDown" || e.key === "s") keys.down = false;
-        if (e.key === "ArrowLeft" || e.key === "a") keys.left = false;
-        if (e.key === "ArrowRight" || e.key === "d") keys.right = false;
-      });
-
-      canvas.addEventListener("touchstart", (e) => {
-        e.preventDefault();
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
-      });
-
-      canvas.addEventListener("touchmove", (e) => {
-        e.preventDefault();
-        if (gameRunning) {
-          let touchX = e.touches[0].clientX;
-          let touchY = e.touches[0].clientY;
-          let deltaX = touchX - touchStartX;
-          let deltaY = touchY - touchStartY;
-
-          const threshold = 20;
-          keys.up = deltaY < -threshold;
-          keys.down = deltaY > threshold;
-          keys.left = deltaX < -threshold;
-          keys.right = deltaX > threshold;
+      // Sprite properties
+      const SPRITES = {
+        player: {
+          width: 464,   // Width of each sprite frame (1856 ÷ 4)
+          height: 464,  // Height of each sprite frame (928 ÷ 2)
+          directions: {
+            up: 0,      // First sprite (was "down") - switched for better perspective
+            down: 1,    // Second sprite (was "up") - switched for better perspective
+            left: 2,    // Third sprite
+            right: 3    // Fourth sprite
+          },
+          row: 0,       // First row in the sprite sheet (blue player)
+          currentDirection: 'down'  // Default facing the viewer
+        },
+        defender: {
+          width: 464,   // Width of each sprite frame (1856 ÷ 4)
+          height: 464,  // Height of each sprite frame (928 ÷ 2)
+          directions: {
+            up: 0,      // First sprite (was "down") - switched for better perspective
+            down: 1,    // Second sprite (was "up") - switched for better perspective
+            left: 2,    // Third sprite
+            right: 3    // Fourth sprite
+          },
+          row: 1        // Second row in the sprite sheet (red player)
         }
-      });
+      };
 
-      canvas.addEventListener("touchend", (e) => {
-        e.preventDefault();
-        keys.up = keys.down = keys.left = keys.right = false;
-      });
+      // Game state constants
+      const GAME_STATE = {
+        WAITING: 0,
+        PLAYING: 1,
+        TOUCHDOWN: 2,
+        GAME_OVER: 3
+      };
 
-      function updatePlayer() {
-        if (keys.up && playerY > 0) playerY -= 3;
-        if (keys.down && playerY < canvas.height - playerSize) playerY += 3;
-        if (keys.left && playerX > 0) playerX -= 3;
-        if (keys.right && playerX < canvas.width - playerSize) playerX += 3;
-      }
-
-      function updateDefenders() {
-        const baseSpeed = 1.5;
-        const speedBoost = 0.2 * touchdowns;
-
-        defenders.forEach((defender, index) => {
-          if (!ballCaught) {
-            const stopLine = canvas.height * 0.4;
-            if (defender.y < stopLine) {
-              defender.y += 1;
-            }
-            return;
-          }
-
-          const dx = playerX - defender.x;
-          const dy = playerY - defender.y;
-          const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-          const angle = Math.atan2(dy, dx);
-
-          const offsetAngle = angle + (index - 1) * 0.4;
-          const speed = baseSpeed + speedBoost;
-          const targetX = playerX + Math.cos(offsetAngle) * 30;
-          const targetY = playerY + Math.sin(offsetAngle) * 30;
-
-          const moveX = ((targetX - defender.x) / distance) * speed;
-          const moveY = ((targetY - defender.y) / distance) * speed;
-
-          defender.x += moveX;
-          defender.y += moveY;
-        });
-      }
-
-      function updateBall() {
-        if (!ballCaught) {
-          ballY += ballSpeedY;
-          ballX += ballSpeedX;
-
-          if (kickArcAmplitude > 0) {
-            const t = (frameCount - kickStartFrame) / 60;
-            const arcOffset = kickArcAmplitude * Math.sin(kickArcFrequency * t);
-            ballX += arcOffset;
-          }
-
-          if (ballX <= ballSize || ballX >= canvas.width - ballSize) {
-            ballX = Math.max(ballSize, Math.min(canvas.width - ballSize, ballX));
-            ballSpeedX = 0;
-          }
-
-          if (ballY >= canvas.height - 50 - ballSize) {
-            ballY = canvas.height - 50 - ballSize;
-          }
-
-          if (bounceCount > 0 && bounceTimer <= 0) {
-            ballSpeedY = -ballSpeedY * 0.6;
-            bounceCount--;
-            bounceTimer = 20;
-          } else if (bounceTimer > 0) {
-            bounceTimer--;
-          } else {
-            ballSpeedY += 0.5;
-          }
-
-          const dx = playerX - ballX;
-          const dy = playerY - ballY;
-          const distance = Math.sqrt(dx * dx + dy * dy);
-
-          if (distance < playerSize + ballSize) {
-            ballCaught = true;
-          }
+      // Game configuration
+      const CONFIG = {
+        playerSize: 30,         // Reduced to 40px
+        defenderSize: 30,       // Reduced to 40px
+        ballSize: 7.5,
+        playerSpeed: 3,
+        defenderBaseSpeed: 1.5, 
+        speedBoostPerTD: 0.2,
+        endZoneTop: 50,
+        endZoneBottom: 0,
+        fieldBottom: 0,
+        bounceDecay: 0.6,
+        gravity: 0.35,
+        touchThreshold: 22,     // Reduced threshold for more responsive touch controls
+        tackleMessage: "TACKLED!",  // Message to display when player is tackled
+        defenderStopLine: 0.65,      // Defenders stop at 65% of the playing field (past midfield toward player)
+        diagonalMovementFactor: 0.9, // Factor to apply to diagonal movement (1.0 = full advantage, 0.7071 = normalized)
+        logo: {              
+          width: 180,           // Increased width for larger logo in the middle of field
+          opacity: 1.0,         // Increased opacity for better visibility
+        },
+        // Asset paths configuration
+        assets: {
+          // For local development
+          useLocalAssets: false,  // Set to true for local, false for production
+          localPath: './assets/sprite_sheet.png',
+          // For production (Farcade)
+          remotePath: 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/Ot13L3vKg2Y8/sprite_sheet-vIXePN04xTeHnE3oPhsiOOVVI81s8A.png?99pf',
+          // Logo paths
+          logoLocalPath: './assets/A7FL_Icon_FC_DBG_RGB.png',
+          logoRemotePath: 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/Ot13L3vKg2Y8/A7FL_Icon_FC_DBG_RGB-jZkWXHKlGQ4xu9iO6dvfZjYWV5uVS5.png?QSih'
         }
+      };
+      
+      // Helper function to get the correct asset path
+      function getAssetPath(filename) {
+        // Since the Farcade URL already includes the filename, we ignore the filename parameter for remote assets
+        return CONFIG.assets.useLocalAssets ? CONFIG.assets.localPath : CONFIG.assets.remotePath;
+      }
 
-        if (ballCaught) {
-          ballX = playerX;
-          ballY = playerY;
+      // Performance optimizations
+      let lastFrameTime = 0;
+      const targetFPS = 60;
+      const frameInterval = 1000 / targetFPS;
+
+      // Game objects
+      player = {
+        x: 0,
+        y: 0,
+        width: CONFIG.playerSize * 2,    // Increased width for better sprite visibility
+        height: CONFIG.playerSize * 2.5, // Increased height for better sprite visibility
+        headRadius: 15
+      };
+
+      ball = {
+        x: 0,
+        y: 0,
+        width: CONFIG.ballSize * 2,
+        height: (CONFIG.ballSize + 5) * 2,
+        speedX: 0,
+        speedY: 0,
+        caught: false,
+        kickArc: {
+          amplitude: 0,
+          frequency: 0,
+          startFrame: 0
+        },
+        bounce: {
+          count: 0,
+          timer: 0
         }
-      }
+      };
 
-      function checkCollisions() {
-        if (!ballCaught) return;
-        defenders.forEach((defender) => {
-          if (Math.abs(defender.x - playerX) < defenderSize && Math.abs(defender.y - playerY) < defenderSize) {
-            gameRunning = false;
-            showGameOver();
-          }
-        });
-      }
-
-      function showTouchdown() {
-        if (!ballCaught) return;
-        if (window.FarcadeSDK) window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
-        touchdowns++;
-        yardsGained += canvas.height - playerY;
-        showParticleEffect(playerX, playerY);
+      // Game variables
+      defenders = [];
+      gameState = GAME_STATE.WAITING;
+      frameCount = 0;
+      touchdowns = 0;
+      inputs = { 
+        keys: { up: false, down: false, left: false, right: false },
+        touch: { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 }
+      };
+      tacklePosition = { x: 0, y: 0 };
+      tackleAnimationTime = 0;
+      tackleAnimationDuration = 1000; // 1 second animation
+      
+      // Initialize the game
+      function init() {
+        // Set up canvas
+        resizeCanvas();
+        
+        // Load sprite sheet - now inside init() after all configurations are defined
+        playerSprite.src = getAssetPath('sprite_sheet.png');
+        playerSprite.onload = function() {
+          // Sprite loaded successfully
+        };
+        
+        // Load defender sprite (same sheet, we'll just use a different color in rendering)
+        defenderSprite.src = getAssetPath('sprite_sheet.png');
+        defenderSprite.onload = function() {
+          // Sprite loaded successfully
+        };
+        
+        // Load A7FL logo
+        a7flLogo.src = CONFIG.assets.useLocalAssets ? CONFIG.assets.logoLocalPath : CONFIG.assets.logoRemotePath; 
+        a7flLogo.onload = function() {
+          console.log("A7FL logo loaded successfully");
+        };
+        a7flLogo.onerror = function() {
+          console.error("Error loading A7FL logo:", this.src);
+        };
+        
+        // Set up event listeners
+        setupEventListeners();
+        
+        // Reset game state
         resetGame();
+        
+        // We're starting in WAITING state until user clicks start
+        gameState = GAME_STATE.WAITING;
       }
 
-      function showGameOver() {
-        if (gameOverHandled) return;
-        gameOverHandled = true;
-        if (window.FarcadeSDK) {
-          window.FarcadeSDK.singlePlayer.actions.gameOver({ score: touchdowns });
+      // Canvas handling
+      function resizeCanvas() {
+        // Get the device pixel ratio
+        const dpr = window.devicePixelRatio || 1;
+        
+        // Set canvas dimensions accounting for pixel ratio
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = window.innerHeight * dpr;
+        
+        // Scale the context to ensure correct drawing operations
+        ctx.scale(dpr, dpr);
+        
+        // Set CSS size
+        canvas.style.width = window.innerWidth + 'px';
+        canvas.style.height = window.innerHeight + 'px';
+        
+        // Update field dimensions
+        CONFIG.fieldBottom = window.innerHeight;
+        
+        // Only reposition objects if the game has started and we have valid objects
+        if (gameState === GAME_STATE.PLAYING) {
+          // Calculate the visible field dimensions
+          const fieldWidth = window.innerWidth;
+          const fieldHeight = window.innerHeight;
+          
+          // Ensure player stays within the visible area
+          if (player && player.x > 0 && player.y > 0) {
+            // Keep player in bounds
+            player.x = Math.min(Math.max(CONFIG.playerSize/2, player.x), fieldWidth - CONFIG.playerSize/2);
+            player.y = Math.min(Math.max(CONFIG.playerSize/2, player.y), fieldHeight - CONFIG.playerSize/2);
+          }
+          
+          // Ensure defenders stay within the visible area
+          if (defenders && defenders.length > 0) {
+            defenders.forEach(defender => {
+              if (defender.x > 0 && defender.y > 0) {
+                // Keep defenders in bounds
+                defender.x = Math.min(Math.max(CONFIG.defenderSize/2, defender.x), fieldWidth - CONFIG.defenderSize/2);
+                defender.y = Math.min(Math.max(CONFIG.defenderSize/2, defender.y), fieldHeight - CONFIG.defenderSize/2);
+              }
+            });
+          }
+          
+          // Ensure ball stays within the visible area if not caught
+          if (ball && !ball.caught && ball.x > 0 && ball.y > 0) {
+            ball.x = Math.min(Math.max(CONFIG.ballSize/2, ball.x), fieldWidth - CONFIG.ballSize/2);
+            ball.y = Math.min(Math.max(CONFIG.ballSize/2, ball.y), fieldHeight - CONFIG.ballSize/2);
+          }
+          
+          // Force a redraw
+          render();
         }
       }
 
-      function resetGame() {
-        playerX = canvas.width / 2;
-        playerY = canvas.height - 50;
-        ballCaught = false;
-
-        kickerIndex = Math.floor(Math.random() * 3);
-        defenders = [
-          { x: canvas.width / 4, y: 50 },
-          { x: canvas.width / 2, y: 50 },
-          { x: (canvas.width * 3) / 4, y: 50 },
-        ];
-
-        const kicker = defenders[kickerIndex];
-        ballX = kicker.x;
-        ballY = kicker.y;
-
-        ballSpeedY = (3 + Math.random() * 2) * 0.7;
-        ballSpeedX = (Math.random() - 0.5) * 1.05;
-        if (ballSpeedY < 0) ballSpeedY *= -1;
-
-        bounceCount = Math.floor(Math.random() * 3);
-        bounceTimer = 0;
-
-        kickArcAmplitude = Math.random() < 0.5 ? 0 : 5 + Math.random() * 10;
-        kickArcFrequency = 3 + Math.random() * 2;
-        kickStartFrame = frameCount;
-
-        gameRunning = true;
-        gameOverHandled = false;
-      }
-
-      function showParticleEffect(x, y) {
-        // Placeholder
-      }
-
-      function renderGame() {
-        frameCount++;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.moveTo(0, 50);
-        ctx.lineTo(canvas.width, 50);
-        ctx.moveTo(0, canvas.height - 50);
-        ctx.lineTo(canvas.width, canvas.height - 50);
-        ctx.stroke();
-
-        ctx.fillStyle = "white";
-        ctx.font = "20px Clarendon, Rockwell, Impact, Georgia, serif";
-        ctx.textAlign = "center";
-        ctx.fillText("A7FL.com 3 on 1 Throw-off Return", canvas.width / 2, canvas.height - 20);
-        ctx.fillText("END ZONE", canvas.width / 2, 30);
-
-        if (gameRunning) {
-          updatePlayer();
-          updateDefenders();
-          updateBall();
-          checkCollisions();
-
-          statsDisplay.innerText = `Touchdowns: ${touchdowns}`;
-
-          ctx.fillStyle = "blue";
-          ctx.fillRect(playerX - playerSize * 0.75, playerY - 6, playerSize * 1.5, playerSize * 2);
-
-          ctx.fillStyle = "black";
-          ctx.beginPath();
-          ctx.arc(playerX, playerY - 6 - 15, 15, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = "black";
-          ctx.fillRect(playerX - playerSize * 0.75 - playerSize / 2, playerY - 6, 8, 24);
-          ctx.fillRect(playerX + playerSize * 0.75, playerY - 6, 8, 24);
-          ctx.fillRect(playerX - 10, playerY - 6 + playerSize * 2, 8, 24);
-          ctx.fillRect(playerX + 2, playerY - 6 + playerSize * 2, 8, 24);
-
-          defenders.forEach((defender) => {
-            ctx.fillStyle = "red";
-            ctx.fillRect(defender.x - defenderSize * 0.75, defender.y - 6, defenderSize * 1.5, defenderSize * 2);
-
-            ctx.fillStyle = "black";
-            ctx.beginPath();
-            ctx.arc(defender.x, defender.y - 6 - 15, 15, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillRect(defender.x - defenderSize * 0.75 - defenderSize / 2, defender.y - 6, 8, 24);
-            ctx.fillRect(defender.x + defenderSize * 0.75, defender.y - 6, 8, 24);
-            ctx.fillRect(defender.x - 10, defender.y - 6 + defenderSize * 2, 8, 24);
-            ctx.fillRect(defender.x + 2, defender.y - 6 + defenderSize * 2, 8, 24);
-          });
-
-          ctx.fillStyle = "white";
-          ctx.beginPath();
-          ctx.ellipse(ballX, ballY, ballSize, ballSize + 5, 0, 0, Math.PI * 2);
-          ctx.fill();
-
-          if (playerY <= 50) {
-            showTouchdown();
-          }
-        }
-
-        requestAnimationFrame(renderGame);
-      }
-
-      window.addEventListener("load", () => {
-        const startButton = document.getElementById("startButton");
-        startButton.addEventListener("click", () => {
-          document.getElementById("instructionsOverlay").style.display = "none";
-          resetGame();
-
-          if (!gameLoopStarted) {
-            renderGame();
-            gameLoopStarted = true;
-          }
-
-          if (window.FarcadeSDK) {
-            window.FarcadeSDK.singlePlayer.actions.ready();
-          }
+      // Event listeners
+      function setupEventListeners() {
+        // Key controls
+        window.addEventListener("keydown", (e) => {
+          if (gameState !== GAME_STATE.PLAYING) return;
+          if (e.key === "ArrowUp" || e.key === "w") inputs.keys.up = true;
+          if (e.key === "ArrowDown" || e.key === "s") inputs.keys.down = true;
+          if (e.key === "ArrowLeft" || e.key === "a") inputs.keys.left = true;
+          if (e.key === "ArrowRight" || e.key === "d") inputs.keys.right = true;
         });
 
+        window.addEventListener("keyup", (e) => {
+          if (e.key === "ArrowUp" || e.key === "w") inputs.keys.up = false;
+          if (e.key === "ArrowDown" || e.key === "s") inputs.keys.down = false;
+          if (e.key === "ArrowLeft" || e.key === "a") inputs.keys.left = false;
+          if (e.key === "ArrowRight" || e.key === "d") inputs.keys.right = false;
+        });
+
+        // Improved touch controls
+        canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
+        canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+        canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
+
+        // Resize handling
+        window.addEventListener("resize", resizeCanvas);
+        
+        // Start button click handler
+        startButton.addEventListener("click", startGame);
+        
+        // SDK event handlers
         if (window.FarcadeSDK) {
           window.FarcadeSDK.on("play_again", () => {
             touchdowns = 0;
-            yardsGained = 0;
-            gameRunning = true;
+            gameState = GAME_STATE.PLAYING;
             resetGame();
           });
 
           window.FarcadeSDK.on("toggle_mute", (data) => {
-            // Mute/unmute game audio
+            // Would handle audio muting if game had sound
           });
         }
-      });
-    </script>
+      }
+      
+      // Start game function
+      function startGame() {
+        instructionsOverlay.style.display = "none";
+        gameState = GAME_STATE.PLAYING;
+        resetGame();
 
-    <div id="instructionsOverlay">
-      <div>How many touchdowns can you score?<br />Use arrow keys or hold down and drag on mobile.</div>
-      <button id="startButton">Press Start</button>
-    </div>
+        // Start game loop if not already started
+        if (!gameLoopStarted) {
+          lastFrameTime = performance.now();
+          requestAnimationFrame(gameLoop);
+          gameLoopStarted = true;
+        }
+
+        // Notify Farcade SDK we're ready
+        if (window.FarcadeSDK) {
+          window.FarcadeSDK.singlePlayer.actions.ready();
+        }
+      }
+
+      // Touch controls
+      function handleTouchStart(e) {
+        e.preventDefault();
+        if (gameState !== GAME_STATE.PLAYING) return;
+        
+        inputs.touch.active = true;
+        inputs.touch.startX = e.touches[0].clientX;
+        inputs.touch.startY = e.touches[0].clientY;
+        inputs.touch.currentX = inputs.touch.startX;
+        inputs.touch.currentY = inputs.touch.startY;
+        
+        // Show touch indicator
+        touchIndicator.style.display = 'block';
+        touchIndicator.style.left = (inputs.touch.startX - 50) + 'px';
+        touchIndicator.style.top = (inputs.touch.startY - 50) + 'px';
+      }
+
+      function handleTouchMove(e) {
+        e.preventDefault();
+        if (!inputs.touch.active || gameState !== GAME_STATE.PLAYING) return;
+        
+        inputs.touch.currentX = e.touches[0].clientX;
+        inputs.touch.currentY = e.touches[0].clientY;
+        
+        const deltaX = inputs.touch.currentX - inputs.touch.startX;
+        const deltaY = inputs.touch.currentY - inputs.touch.startY;
+        
+        // Update key state based on touch direction
+        const threshold = CONFIG.touchThreshold;
+        inputs.keys.up = deltaY < -threshold;
+        inputs.keys.down = deltaY > threshold;
+        inputs.keys.left = deltaX < -threshold;
+        inputs.keys.right = deltaX > threshold;
+        
+        // Update touch indicator position
+        touchIndicator.style.left = (inputs.touch.currentX - 50) + 'px';
+        touchIndicator.style.top = (inputs.touch.currentY - 50) + 'px';
+      }
+
+      function handleTouchEnd(e) {
+        e.preventDefault();
+        inputs.touch.active = false;
+        inputs.keys.up = inputs.keys.down = inputs.keys.left = inputs.keys.right = false;
+        touchIndicator.style.display = 'none';
+      }
+
+      // Game reset
+      function resetGame() {
+        // Reset player position - ensure it's in the visible area
+        // Position player at the bottom of the field, above the end zone
+        player.x = window.innerWidth / 2;
+        player.y = window.innerHeight - 75;
+        
+        // Reset player direction to face the viewer
+        SPRITES.player.currentDirection = 'down';
+        
+        // Reset defenders - position them in a row in the upper part of the field
+        // Make sure they're all visible at 100% zoom
+        defenders = [];
+        const defenderY = window.innerHeight * 0.2;
+        
+        // Calculate positions to ensure all defenders are visible
+        // Use percentages that keep them within the visible area
+        const positions = [0.25, 0.5, 0.75];
+        
+        for (let i = 0; i < 3; i++) {
+          defenders.push({
+            x: window.innerWidth * positions[i],
+            y: defenderY,
+            width: CONFIG.defenderSize * 2,     // Increased width for better sprite visibility
+            height: CONFIG.defenderSize * 2.5,  // Increased height for better sprite visibility
+            headRadius: 15,
+            speed: CONFIG.defenderBaseSpeed + (CONFIG.speedBoostPerTD * touchdowns),
+            number: i + 1,
+            vx: 0,  // Add velocity properties for direction calculation
+            vy: 0
+          });
+        }
+        
+        // Reset ball
+        ball.caught = false;
+        
+        // Set up kick
+        const kickerIndex = Math.floor(Math.random() * 3);
+        const kicker = defenders[kickerIndex];
+        
+        ball.x = kicker.x;
+        ball.y = kicker.y;
+        ball.speedY = (3 + Math.random() * 2) * 0.7;
+        ball.speedX = (Math.random() - 0.5) * 3.5; // Increased from 1.05 to 3.5 for more horizontal movement
+        if (ball.speedY < 0) ball.speedY *= -1;
+        
+        ball.bounce.count = Math.floor(Math.random() * 3);
+        ball.bounce.timer = 0;
+        
+        ball.kickArc.amplitude = Math.random() < 0.5 ? 0 : 5 + Math.random() * 10;
+        ball.kickArc.frequency = 3 + Math.random() * 2;
+        ball.kickArc.startFrame = frameCount;
+        
+        updateStats();
+      }
+
+      // Game state updates
+      function updateGame(deltaTime) {
+        frameCount++;
+        
+        if (gameState !== GAME_STATE.PLAYING) return;
+        
+        updatePlayerDirection();
+        updatePlayer(deltaTime);
+        updateBall(deltaTime);
+        updateDefenders(deltaTime);
+        checkCollisions();
+      }
+
+      // Update player's direction based on movement
+      function updatePlayerDirection() {
+        // Determine direction based on key inputs
+        if (inputs.keys.up && !inputs.keys.down) {
+          SPRITES.player.currentDirection = 'up';
+        } else if (inputs.keys.down && !inputs.keys.up) {
+          SPRITES.player.currentDirection = 'down';
+        } else if (inputs.keys.left && !inputs.keys.right) {
+          SPRITES.player.currentDirection = 'left';
+        } else if (inputs.keys.right && !inputs.keys.left) {
+          SPRITES.player.currentDirection = 'right';
+        }
+        // For diagonal movement, prioritize left/right over up/down
+        else if (inputs.keys.up && inputs.keys.left) {
+          SPRITES.player.currentDirection = 'left';
+        } else if (inputs.keys.up && inputs.keys.right) {
+          SPRITES.player.currentDirection = 'right';
+        } else if (inputs.keys.down && inputs.keys.left) {
+          SPRITES.player.currentDirection = 'left';
+        } else if (inputs.keys.down && inputs.keys.right) {
+          SPRITES.player.currentDirection = 'right';
+        }
+      }
+
+      function updatePlayer(deltaTime) {
+        // Calculate movement with delta time for consistent speed
+        const moveSpeed = CONFIG.playerSpeed * deltaTime / (1000/60);
+        
+        // Check if moving diagonally (pressing keys in both axes)
+        const movingHorizontally = inputs.keys.left || inputs.keys.right;
+        const movingVertically = inputs.keys.up || inputs.keys.down;
+        const movingDiagonally = movingHorizontally && movingVertically;
+        
+        // Apply diagonal movement factor if moving diagonally
+        const adjustedMoveSpeed = movingDiagonally 
+          ? moveSpeed * CONFIG.diagonalMovementFactor 
+          : moveSpeed;
+        
+        if (inputs.keys.up && player.y > CONFIG.endZoneTop) {
+          player.y -= adjustedMoveSpeed;
+        }
+        if (inputs.keys.down && player.y < CONFIG.fieldBottom) {
+          player.y += adjustedMoveSpeed;
+        }
+        if (inputs.keys.left && player.x > player.width/2) {
+          player.x -= adjustedMoveSpeed;
+        }
+        if (inputs.keys.right && player.x < canvas.width/(window.devicePixelRatio || 1) - player.width/2) {
+          player.x += adjustedMoveSpeed;
+        }
+      }
+
+      function updateBall(deltaTime) {
+        if (ball.caught) {
+          // Ball follows player when caught
+          ball.x = player.x;
+          ball.y = player.y;
+          return;
+        }
+        
+        // Apply gravity
+        ball.speedY += CONFIG.gravity * deltaTime / (1000/60);
+        
+        // Update position
+        ball.x += ball.speedX * deltaTime / (1000/60);
+        ball.y += ball.speedY * deltaTime / (1000/60);
+        
+        // Handle ball bouncing off edges
+        if (ball.x < 0 || ball.x > window.innerWidth) {
+          ball.speedX *= -0.8; // Reduced bounce energy
+          ball.x = ball.x < 0 ? 0 : window.innerWidth;
+        }
+        
+        // Handle ball hitting the ground
+        if (ball.y > window.innerHeight - 50 - ball.height/2) {
+          // More realistic bounce - reduce the bounce height significantly
+          // and add some randomness to the direction
+          
+          // Only bounce if the ball has enough energy
+          if (Math.abs(ball.speedY) > 1) {
+            // Calculate max bounce height (10% of field height from bottom)
+            const maxBounceHeight = window.innerHeight * 0.1;
+            // Convert desired height to velocity using physics formula v = sqrt(2gh)
+            // where g is gravity and h is height
+            const maxBounceVelocity = Math.sqrt(2 * CONFIG.gravity * maxBounceHeight);
+            
+            // Limit the bounce velocity to our calculated maximum
+            ball.speedY = -Math.min(Math.abs(ball.speedY) * 0.4, maxBounceVelocity);
+            
+            // Add a small random horizontal component for realistic roll
+            // but limit the maximum horizontal speed
+            const maxHorizontalSpeed = 2;
+            ball.speedX = Math.max(
+              -maxHorizontalSpeed,
+              Math.min(
+                maxHorizontalSpeed,
+                ball.speedX * 0.7 + (Math.random() - 0.5) * 2
+              )
+            );
+            
+            ball.bounce.count++;
+            ball.bounce.timer = 10;
+          } else {
+            // Ball has lost energy, just roll a bit
+            ball.speedY = 0;
+            ball.speedX *= 0.95; // Gradual slowdown
+            
+            // Stop completely when very slow
+            if (Math.abs(ball.speedX) < 0.2) {
+              ball.speedX = 0;
+            }
+          }
+          
+          // Keep ball above ground
+          ball.y = window.innerHeight - 50 - ball.height/2;
+        }
+        
+        // Handle ball hitting top of field
+        if (ball.y < CONFIG.endZoneTop + ball.height/2) {
+          ball.speedY *= -0.6; // Reduced bounce energy
+          ball.y = CONFIG.endZoneTop + ball.height/2;
+        }
+        
+        // Check if player catches the ball
+        const dx = player.x - ball.x;
+        const dy = player.y - ball.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < CONFIG.playerSize + CONFIG.ballSize) {
+          ball.caught = true;
+          if (window.FarcadeSDK) window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
+        }
+      }
+
+      function updateDefenders(deltaTime) {
+        // Skip if game is not in playing state
+        if (gameState !== GAME_STATE.PLAYING) return;
+        
+        // Calculate movement with delta time for consistent speed
+        const moveSpeed = CONFIG.defenderBaseSpeed * (1 + CONFIG.speedBoostPerTD * touchdowns) * deltaTime / (1000/60);
+        
+        // Calculate the actual playing field height (excluding end zones)
+        const fieldHeight = window.innerHeight - 50 - CONFIG.endZoneTop;
+        
+        defenders.forEach(defender => {
+          if (!ball.caught) {
+            // If ball is not caught, defenders wait at their positions
+            // Calculate stop line as a percentage of the actual playing field
+            const stopLine = CONFIG.endZoneTop + (fieldHeight * CONFIG.defenderStopLine);
+            
+            // Always set direction to face downfield (toward player) when ball is not caught
+            defender.direction = SPRITES.defender.directions.down;
+            
+            if (defender.y < stopLine) {
+              defender.y += moveSpeed;
+              defender.vx = 0;
+              defender.vy = moveSpeed;
+            } else {
+              defender.vx = 0;
+              defender.vy = 0;
+            }
+            return;
+          }
+          
+          // Chase player when ball is caught
+          const dx = player.x - defender.x;
+          const dy = player.y - defender.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          if (distance > 0) {
+            const moveX = (dx / distance) * moveSpeed;
+            const moveY = (dy / distance) * moveSpeed;
+            
+            // Apply movement
+            defender.x += moveX;
+            defender.y += moveY;
+            defender.vx = moveX;
+            defender.vy = moveY;
+          } else {
+            defender.vx = 0;
+            defender.vy = 0;
+          }
+        });
+      }
+
+      function checkCollisions() {
+        // Only check collisions if the ball is caught
+        if (!ball.caught) return;
+        
+        // Check for touchdown
+        if (player.y <= CONFIG.endZoneTop + player.height/4) {
+          gameState = GAME_STATE.TOUCHDOWN;
+          onTouchdown();
+          return;
+        }
+        
+        // Check for tackle - more forgiving collision detection
+        for (const defender of defenders) {
+          // Calculate center-to-center distance
+          const dx = player.x - defender.x;
+          const dy = player.y - defender.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          
+          // Use a more forgiving collision threshold - 70% of the combined width
+          // This gives the player more room to maneuver between defenders
+          const collisionThreshold = (player.width + defender.width) * 0.35;
+          
+          if (distance < collisionThreshold) {
+            gameState = GAME_STATE.GAME_OVER;
+            onGameOver();
+            return;
+          }
+        }
+      }
+
+      // Game events
+      function onTouchdown() {
+        touchdowns++;
+        updateStats();
+        
+        // Provide feedback
+        if (window.FarcadeSDK) window.FarcadeSDK.singlePlayer.actions.hapticFeedback();
+        
+        // Add a short delay before resetting the game
+        setTimeout(() => {
+          resetGame();
+          gameState = GAME_STATE.PLAYING;
+        }, 1000);  // Reduced to 1.5 seconds
+      }
+
+      function onGameOver() {
+        gameState = GAME_STATE.GAME_OVER;
+        
+        // Store the position where the tackle happened
+        tacklePosition.x = player.x;
+        tacklePosition.y = player.y;
+        tackleAnimationTime = tackleAnimationDuration;
+        
+        // Notify Farcade SDK
+        if (window.FarcadeSDK) {
+          window.FarcadeSDK.singlePlayer.actions.gameOver({
+            score: touchdowns
+          });
+        }
+      }
+
+      function updateStats() {
+        statsDisplay.innerText = `Touchdowns: ${touchdowns}`;
+      }
+
+      // Rendering
+      function render() {
+        // Clear with proper sizing
+        ctx.clearRect(0, 0, canvas.width/(window.devicePixelRatio || 1), canvas.height/(window.devicePixelRatio || 1));
+        
+        // Explicitly fill with field color to ensure consistent appearance
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--field-color').trim();
+        ctx.fillRect(0, 0, canvas.width/(window.devicePixelRatio || 1), canvas.height/(window.devicePixelRatio || 1));
+        
+        // Draw field
+        drawField();
+        
+        // Draw ball if not caught
+        if (!ball.caught) {
+          drawBall();
+        }
+        
+        // For 'up' direction, draw ball first if caught
+        if (ball.caught && SPRITES.player.currentDirection === 'up') {
+          // Position ball based on direction - assume player is right-handed
+          // For 'up' direction, position ball slightly behind and to the right
+          const ballOffsetX = 12;   // Ball on right side when back is to viewer
+          const ballOffsetY = 10;   // Lower to be partially hidden by player
+          
+          // Draw ball behind player (lower z-index)
+          drawBallInHands(player.x + ballOffsetX, player.y + ballOffsetY);
+        }
+        
+        // Draw player
+        drawPlayer();
+        
+        // Draw defenders
+        drawDefenders();
+        
+        // Draw ball for other directions if caught
+        if (ball.caught && SPRITES.player.currentDirection !== 'up') {
+          // Position ball based on direction - assume player is right-handed
+          let ballOffsetX = 0;
+          let ballOffsetY = 0;
+          
+          switch(SPRITES.player.currentDirection) {
+            case 'left':
+              ballOffsetX = -15;  // Ball on left side
+              break;
+            case 'right':
+              ballOffsetX = 15;   // Ball on right side
+              break;
+            case 'down':
+              ballOffsetX = -15;  // Ball on left side when facing viewer
+              ballOffsetY = 0;    // Centered vertically
+              break;
+          }
+          
+          drawBallInHands(player.x + ballOffsetX, player.y + ballOffsetY);
+        }
+        
+        // Draw touchdown celebration if needed
+        if (gameState === GAME_STATE.TOUCHDOWN) {
+          drawTouchdownCelebration();
+        }
+        
+        // Draw tackle animation if needed
+        drawTackleAnimation();
+      }
+
+      function drawField() {
+        // Draw field background
+        ctx.fillStyle = "var(--field-color)";
+        ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+        
+        // Draw top end zone (lighter color)
+        ctx.fillStyle = "#0d6621";
+        ctx.fillRect(0, 0, window.innerWidth, CONFIG.endZoneTop);
+        
+        // Draw bottom end zone (lighter color)
+        ctx.fillStyle = "#0d6621";
+        ctx.fillRect(0, window.innerHeight - 50, window.innerWidth, 50);
+        
+        // Draw end zone lines
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, CONFIG.endZoneTop);
+        ctx.lineTo(window.innerWidth, CONFIG.endZoneTop);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(0, window.innerHeight - 50);
+        ctx.lineTo(window.innerWidth, window.innerHeight - 50);
+        ctx.stroke();
+        
+        // Draw field labels
+        ctx.fillStyle = "white";
+        ctx.font = "20px Clarendon, Rockwell, Impact, Georgia, serif";
+        ctx.textAlign = "center";
+        ctx.fillText("A7FL.com 3 on 1 Throw-off Return", window.innerWidth/2, window.innerHeight - 25);
+        ctx.fillText("END ZONE", window.innerWidth/2, 30);
+        
+        // Yard lines for visual effect
+        ctx.strokeStyle = "rgba(255,255,255,0.3)";
+        ctx.lineWidth = 2;
+        
+        const yardLineCount = 10;
+        const fieldHeight = window.innerHeight - 50 - CONFIG.endZoneTop;
+        const spacing = fieldHeight / yardLineCount;
+        
+        for (let i = 1; i < yardLineCount; i++) {
+          const y = CONFIG.endZoneTop + spacing * i;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(window.innerWidth, y);
+          ctx.stroke();
+        }
+        
+        // Add hash marks (vertical distance markers)
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        
+        // Add two sets of hash marks - one third from each side
+        const leftHashX = window.innerWidth * 0.25;
+        const rightHashX = window.innerWidth * 0.75;
+        const hashHeight = 15; // Height of each hash mark
+        
+        // Draw hash marks every 5 yards
+        const hashMarkSpacing = spacing / 2; // Half the spacing of yard lines for more detail
+        
+        for (let i = 0; i <= yardLineCount * 2; i++) {
+          const y = CONFIG.endZoneTop + hashMarkSpacing * i;
+          if (y >= window.innerHeight - 50) continue; // Don't draw beyond the field
+          
+          // Left hash marks
+          ctx.beginPath();
+          ctx.moveTo(leftHashX - hashHeight/2, y);
+          ctx.lineTo(leftHashX + hashHeight/2, y);
+          ctx.stroke();
+          
+          // Right hash marks
+          ctx.beginPath();
+          ctx.moveTo(rightHashX - hashHeight/2, y);
+          ctx.lineTo(rightHashX + hashHeight/2, y);
+          ctx.stroke();
+        }
+        
+        // Add yard numbers
+        ctx.fillStyle = "white";
+        ctx.font = "bold 24px Arial, sans-serif";
+        ctx.textAlign = "center";
+        
+        // Position yard numbers outside the hash marks
+        const leftNumberX = leftHashX - 30;
+        const rightNumberX = rightHashX + 30;
+        
+        // Draw yard numbers at every 10 yard line
+        for (let i = 0; i <= yardLineCount; i++) {
+          // Calculate yard number (50 at midfield, decreasing toward both end zones)
+          const yardNumber = 50 - Math.abs(i - 5) * 10;
+          if (yardNumber <= 0) continue; // Don't show numbers below 10
+          
+          const y = CONFIG.endZoneTop + spacing * i;
+          
+          // Draw numbers rotated 90 degrees for correct sideline viewing
+          // Left side numbers
+          ctx.save();
+          ctx.translate(leftNumberX, y);
+          ctx.rotate(Math.PI / 2); // Rotate 90 degrees clockwise
+          ctx.fillText(yardNumber.toString(), 0, 0);
+          ctx.restore();
+          
+          // Right side numbers
+          ctx.save();
+          ctx.translate(rightNumberX, y);
+          ctx.rotate(-Math.PI / 2); // Rotate 90 degrees counter-clockwise
+          ctx.fillText(yardNumber.toString(), 0, 0);
+          ctx.restore();
+        }
+        
+        // Draw A7FL logo in the middle of the field
+        if (a7flLogo.complete && a7flLogo.naturalWidth !== 0) {
+          // Calculate responsive logo size based on screen width
+          const maxLogoWidth = Math.min(CONFIG.logo.width, window.innerWidth * 0.4); // Use window.innerWidth for consistency
+          const aspectRatio = a7flLogo.naturalHeight / a7flLogo.naturalWidth;
+          const responsiveLogoWidth = maxLogoWidth;
+          const responsiveLogoHeight = responsiveLogoWidth * aspectRatio;
+          
+          // Position logo in the middle of the VISIBLE field (using window dimensions)
+          const logoX = (window.innerWidth - responsiveLogoWidth) / 2;
+          const logoY = (window.innerHeight - responsiveLogoHeight) / 2;
+          
+          // Save context state before drawing logo
+          ctx.save();
+          
+          // Draw with translucency
+          ctx.globalAlpha = CONFIG.logo.opacity;
+          ctx.drawImage(a7flLogo, logoX, logoY, responsiveLogoWidth, responsiveLogoHeight);
+          
+          // Restore context state
+          ctx.restore();
+        }
+      }
+
+      function drawPlayer() {
+        // Save the current context state
+        ctx.save();
+        
+        // If the sprite sheet is loaded, draw the player using sprites
+        if (playerSprite.complete) {
+          const direction = SPRITES.player.currentDirection;
+          const spriteIndex = SPRITES.player.directions[direction];
+          
+          // Calculate the source position in the sprite sheet
+          const sx = spriteIndex * SPRITES.player.width;
+          const sy = SPRITES.player.row * SPRITES.player.height;
+          
+          // Draw the sprite at the player's position
+          // Center the sprite on the player's position
+          const drawX = player.x - player.width/2;
+          const drawY = player.y - player.height/2;
+          
+          // Draw the sprite scaled down to match the player size
+          try {
+            ctx.drawImage(
+              playerSprite,       // Image source
+              sx, sy,             // Source position
+              SPRITES.player.width, SPRITES.player.height, // Source dimensions
+              drawX, drawY,       // Destination position
+              player.width, player.height  // Destination dimensions (scaled down)
+            );
+          } catch (error) {
+            console.error("Error drawing player sprite:", error);
+          }
+        } 
+        // Fallback to original drawing method if sprite not loaded
+        else {
+          // Draw player body (blue rectangle)
+          ctx.fillStyle = "#0066cc";
+          ctx.fillRect(
+            player.x - player.width/2,
+            player.y - player.height/2,
+            player.width,
+            player.height
+          );
+          
+          // Draw player head (blue circle)
+          ctx.beginPath();
+          ctx.arc(
+            player.x,
+            player.y - player.height/2,
+            player.headRadius,
+            0,
+            Math.PI * 2
+          );
+          ctx.fillStyle = "#0066cc";
+          ctx.fill();
+          
+          // Draw player number
+          ctx.fillStyle = "white";
+          ctx.font = "bold 16px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("7", player.x, player.y);
+        }
+        
+        ctx.restore();
+      }
+      
+      // Helper function to draw the ball in player's hands
+      function drawBallInHands(x, y) {
+        ctx.save();
+        
+        // Ball body (white for A7FL ball)
+        ctx.fillStyle = "#FFFFFF";
+        ctx.beginPath();
+        ctx.ellipse(
+          x, 
+          y,
+          ball.width/2,
+          ball.height/2,
+          0,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+        
+        // Ball laces (grey for A7FL ball)
+        ctx.strokeStyle = "#888888";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x - 5, y);
+        ctx.lineTo(x + 5, y);
+        ctx.stroke();
+        
+        ctx.restore();
+      }
+
+      function drawDefenders() {
+        ctx.save();
+        
+        defenders.forEach(defender => {
+          // Calculate direction based on movement
+          let direction = 'down'; // Default direction
+          
+          // Determine direction based on velocity
+          if (Math.abs(defender.vx) > Math.abs(defender.vy)) {
+            // Moving more horizontally than vertically
+            direction = defender.vx > 0 ? 'right' : 'left';
+          } else {
+            // Moving more vertically than horizontally
+            direction = defender.vy > 0 ? 'down' : 'up';
+          }
+          
+          // Override with explicit direction if ball is not caught
+          if (!ball.caught) {
+            direction = 'down';
+          }
+          
+          // If the sprite sheet is loaded, draw the defender using sprites
+          if (defenderSprite.complete) {
+            const spriteIndex = SPRITES.defender.directions[direction];
+            
+            // Calculate the source position in the sprite sheet
+            const sx = spriteIndex * SPRITES.defender.width;
+            const sy = SPRITES.defender.row * SPRITES.defender.height;
+            
+            // Draw the sprite at the defender's position
+            const drawX = defender.x - defender.width/2;
+            const drawY = defender.y - defender.height/2;
+            
+            // Apply a red tint to the defender sprite
+            ctx.filter = 'hue-rotate(330deg) saturate(150%)';
+            
+            ctx.drawImage(
+              defenderSprite,       // Image source
+              sx, sy,               // Source position
+              SPRITES.defender.width, SPRITES.defender.height, // Source dimensions
+              drawX, drawY,         // Destination position
+              defender.width, defender.height  // Destination dimensions (scaled down)
+            );
+            
+            // Reset filter
+            ctx.filter = 'none';
+          } 
+          // Fallback to original drawing method if sprite not loaded
+          else {
+            // Draw defender body (red rectangle)
+            ctx.fillStyle = "#cc0000";
+            ctx.fillRect(
+              defender.x - CONFIG.defenderSize, 
+              defender.y - CONFIG.defenderSize, 
+              CONFIG.defenderSize * 2, 
+              CONFIG.defenderSize * 2
+            );
+            
+            // Draw defender head
+            ctx.beginPath();
+            ctx.arc(
+              defender.x, 
+              defender.y - CONFIG.defenderSize - 5, 
+              CONFIG.defenderSize - 5, 
+              0, 
+              Math.PI * 2
+            );
+            ctx.fillStyle = "#cc0000";
+            ctx.fill();
+            
+            // Draw defender number
+            ctx.fillStyle = "white";
+            ctx.font = "bold 14px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(defender.number.toString(), defender.x, defender.y);
+          }
+        });
+        
+        ctx.restore();
+      }
+
+      function drawBall() {
+        ctx.save();
+        
+        // Ball shadow
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.beginPath();
+        ctx.ellipse(
+          ball.x + 5, 
+          ball.y + 5,
+          ball.width/2,
+          ball.height/2,
+          0,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+        
+        // Ball body (white for A7FL ball)
+        ctx.fillStyle = "#FFFFFF";
+        ctx.beginPath();
+        ctx.ellipse(
+          ball.x, 
+          ball.y,
+          ball.width/2,
+          ball.height/2,
+          0,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+        
+        // Ball laces (grey for A7FL ball)
+        ctx.strokeStyle = "#888888";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(ball.x - 5, ball.y);
+        ctx.lineTo(ball.x + 5, ball.y);
+        ctx.stroke();
+        
+        // Additional stitching lines
+        ctx.beginPath();
+        ctx.moveTo(ball.x - 3, ball.y - 3);
+        ctx.lineTo(ball.x + 3, ball.y - 3);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(ball.x - 3, ball.y + 3);
+        ctx.lineTo(ball.x + 3, ball.y + 3);
+        ctx.stroke();
+        
+        ctx.restore();
+      }
+
+      function drawTouchdownCelebration() {
+        // Flash end zone
+        ctx.fillStyle = `rgba(255, 204, 0, ${Math.sin(frameCount * 0.2) * 0.5 + 0.5})`;
+        ctx.fillRect(0, 0, window.innerWidth, CONFIG.endZoneTop);
+        
+        // Display celebration text
+        ctx.fillStyle = "white";
+        ctx.font = "40px Clarendon, Rockwell, Impact, Georgia, serif";
+        ctx.textAlign = "center";
+        ctx.fillText("TOUCHDOWN!", window.innerWidth/2, CONFIG.endZoneTop/2);
+      }
+
+      function drawTackleAnimation() {
+        if (tackleAnimationTime <= 0) return;
+        
+        // Calculate animation progress (1.0 to 0.0)
+        const progress = tackleAnimationTime / tackleAnimationDuration;
+        
+        // Scale and fade effect
+        const scale = 1 + (1 - progress) * 2;
+        const opacity = progress;
+        
+        ctx.save();
+        
+        // Draw message at tackle position
+        ctx.font = `bold ${Math.floor(30 * scale)}px Impact, Arial, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        
+        // Text shadow for better visibility
+        ctx.fillStyle = "rgba(0, 0, 0, " + (opacity * 0.5) + ")";
+        ctx.fillText(CONFIG.tackleMessage, tacklePosition.x + 2, tacklePosition.y + 2);
+        
+        // Main text
+        ctx.fillStyle = `rgba(255, 0, 0, ${opacity})`;
+        ctx.fillText(CONFIG.tackleMessage, tacklePosition.x, tacklePosition.y);
+        
+        // Update animation time
+        tackleAnimationTime -= 16; // Roughly 60fps
+        
+        ctx.restore();
+      }
+
+      // Game loop with timing control
+      function gameLoop(currentTime) {
+        // Calculate delta time for smooth animation
+        const deltaTime = currentTime - lastFrameTime;
+        
+        // Only update if enough time has passed (frame limiting)
+        if (deltaTime >= frameInterval) {
+            // Calculate time correction factor if we're getting too far behind
+            const timeCorrectionFactor = Math.min(deltaTime / frameInterval, 3);
+            
+            // Update game state
+            updateGame(deltaTime * timeCorrectionFactor);
+            
+            // Render game
+            render();
+            
+            // Update timestamp for next frame
+            lastFrameTime = currentTime;
+        }
+        
+        // Request next frame
+        requestAnimationFrame(gameLoop);
+      }
+
+      // Initialize the game
+      init();
+    </script>
   </body>
 </html>

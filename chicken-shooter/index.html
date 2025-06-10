@@ -79,6 +79,7 @@ body {
     
     
     
+    
 <script>
 /**
  * Game Configuration
@@ -131,6 +132,7 @@ const ENV = {
             // For any remote hosting, use the Vercel storage URLs
             const spriteUrls = {
                 'chicken': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/chicken-4FQWSrjXkBwJBbk4qk55EBo4EDoKE8.png?uNnN',
+                'chicken-passive': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/chicken-passive-DWWAy838C12CBzo8xqA9gBMPtsjdpI.png?MRAH',
                 'farmhand': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/farmhand-F1Qox10gZxktXUpv9GKk1SHEKu9LCP.png?Oz0w',
                 'fox': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/fox-vXa5k0VK8pvyEOdudPfKj42WpYrSrS.png?FZjK',
                 'monster': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/monster-ySEip4CtqnskQFmr5XM2kX3inkZmrC.png?kX0g'
@@ -139,12 +141,32 @@ const ENV = {
             // Return the URL or fall back to local path if URL is missing
             return spriteUrls[spriteFileName] || (this.getAssetPath() + 'images/' + spriteFileName + '.png');
         }
+    },
+    
+    // Get specific sound URLs based on environment
+    getSoundUrl: function(soundName) {
+        if (this.isLocal()) {
+            // For local development, use the local paths
+            return this.getAssetPath() + 'audio/' + soundName + '.mp3';
+        } else {
+            // For any remote hosting, use the Vercel storage URLs
+            const soundUrls = {
+                'gameplay-music': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/gameplay-music-18KGOPM8TqbrR2MrdtqJbX3Y7xFGKq.mp3?x93C', // Placeholder URLs
+                'stage-transition': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/stage-transition-9VW67uWm0KLICeFIBxaPqmHCRgBTCP.mp3?iJTF',
+                'game-over': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/game-over-zLU6uhgC2SM76IzWSLyWc0piMMMIQB.mp3?fLhV',
+                'start-game': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/start-game-fZQSXWqFUrW1r5ZfO8QTfzwswJBZqn.mp3?9Yy5',
+                'power-up': 'https://lqy3lriiybxcejon.public.blob.vercel-storage.com/DDG0emqyJt67/power-up-NKaoStMb4RkYe2oEzQGmQUE6duXLpo.mp3?tSKI'
+            };
+            
+            // Return the URL or fall back to local path if URL is missing
+            return soundUrls[soundName] || (this.getAssetPath() + 'audio/' + soundName + '.mp3');
+        }
     }
 };
 const CONFIG = {
     // Player settings
     PLAYER: {
-        HEALTH: 200,
+        HEALTH: 200, 
         SPEED: 200,
         FIRE_RATE: 1.0,
         PROJECTILE_SPEED: 400,
@@ -300,6 +322,177 @@ const SpriteManager = {
 };
 
 /**
+ * Sound Manager for Chicken Shooter
+ * Handles loading and playing game sounds and music
+ */
+
+const SoundManager = {
+    sounds: {},
+    music: {},
+    muted: false,
+    musicVolume: 0.5,
+    soundVolume: 0.7,
+    currentMusic: null,
+    
+    /**
+     * Initialize the sound manager
+     */
+    init() {
+        this.loadSounds();
+        this.setupMuteButton();
+    },
+    
+    /**
+     * Load all game sounds and music
+     */
+    loadSounds() {
+        // Define sound paths
+        const soundPaths = {
+            // Music tracks
+            gameplayMusic: ENV.getSoundUrl('gameplay-music'),
+            
+            // Sound effects
+            startGame: ENV.getSoundUrl('start-game'),
+            gameOver: ENV.getSoundUrl('game-over'),
+            stageTransition: ENV.getSoundUrl('stage-transition'),
+            // playerHit: ENV.getSoundUrl('player-hit'),
+            // enemyHit: ENV.getSoundUrl('enemy-hit'),
+            powerUp: ENV.getSoundUrl('power-up'),
+        };
+        
+        // Load each sound
+        Object.keys(soundPaths).forEach(key => {
+            // Determine if this is music or a sound effect based on key name
+            const isMusic = key.includes('Music');
+            const collection = isMusic ? this.music : this.sounds;
+            
+            collection[key] = new Audio();
+            collection[key].src = soundPaths[key];
+            
+            // Set loop property for music
+            if (isMusic) {
+                collection[key].loop = key === 'gameplayMusic'; // Only main gameplay music loops
+            }
+            
+            // Set volume
+            collection[key].volume = isMusic ? this.musicVolume : this.soundVolume;
+            
+            // Log loading status
+            collection[key].oncanplaythrough = () => {
+                console.log(`Loaded sound: ${key}`);
+            };
+            
+            collection[key].onerror = () => {
+                console.warn(`Failed to load sound: ${key}`);
+            };
+        });
+    },
+    
+    /**
+     * Create a mute button in the UI
+     */
+    // Note: setupMuteButton is no longer used as the mute button is now drawn on canvas
+    // This is kept for backward compatibility
+    setupMuteButton() {
+        // Mute button is now drawn directly on the canvas like the pause button
+        // See Game.drawMuteButton() implementation
+        console.log('Mute button will be drawn on canvas');
+        
+        // Remove any existing DOM mute button
+        const existingButton = document.getElementById('mute-button');
+        if (existingButton) {
+            existingButton.parentNode.removeChild(existingButton);
+        }
+    },
+    
+    /**
+     * Toggle mute state for all audio
+     */
+    toggleMute() {
+        this.muted = !this.muted;
+        
+        // Update volume for all sounds
+        Object.values(this.sounds).forEach(sound => {
+            sound.muted = this.muted;
+        });
+        
+        // Update volume for all music
+        Object.values(this.music).forEach(music => {
+            music.muted = this.muted;
+        });
+    },
+    
+    /**
+     * Play a sound effect once
+     * @param {string} soundName - Name of the sound to play
+     */
+    playSound(soundName) {
+        const sound = this.sounds[soundName];
+        if (sound) {
+            // Reset sound to beginning if it's already playing
+            sound.currentTime = 0;
+            sound.play().catch(error => {
+                console.warn(`Error playing sound ${soundName}:`, error);
+            });
+        }
+    },
+    
+    /**
+     * Play background music, stopping any currently playing music
+     * @param {string} musicName - Name of the music track to play
+     */
+    playMusic(musicName) {
+        // Stop current music if playing
+        if (this.currentMusic) {
+            this.music[this.currentMusic].pause();
+            this.music[this.currentMusic].currentTime = 0;
+        }
+        
+        // Play new music
+        const music = this.music[musicName];
+        if (music) {
+            music.play().catch(error => {
+                console.warn(`Error playing music ${musicName}:`, error);
+            });
+            this.currentMusic = musicName;
+        }
+    },
+    
+    /**
+     * Stop the currently playing music
+     */
+    stopMusic() {
+        if (this.currentMusic && this.music[this.currentMusic]) {
+            this.music[this.currentMusic].pause();
+            this.music[this.currentMusic].currentTime = 0;
+            this.currentMusic = null;
+        }
+    },
+    
+    /**
+     * Set the volume for all music tracks
+     * @param {number} volume - Volume level from 0 to 1
+     */
+    setMusicVolume(volume) {
+        this.musicVolume = Math.max(0, Math.min(1, volume));
+        Object.values(this.music).forEach(music => {
+            music.volume = this.musicVolume;
+        });
+    },
+    
+    /**
+     * Set the volume for all sound effects
+     * @param {number} volume - Volume level from 0 to 1
+     */
+    setSoundVolume(volume) {
+        this.soundVolume = Math.max(0, Math.min(1, volume));
+        Object.values(this.sounds).forEach(sound => {
+            sound.volume = this.soundVolume;
+        });
+    }
+};
+
+/**
  * Game class - Main game controller
  * Handles the game loop, canvas setup, and core game mechanics
  */
@@ -323,11 +516,19 @@ class Game {
         // Pause button element
         this.pauseButton = null;
         
+        // Mute button properties will be set in createMuteButton()
+        this.muteButtonSize = 40;
+        this.isMuteButtonHovered = false;
+        
         // Set up the canvas dimensions for mobile-friendly gameplay
         this.setupCanvas();
         
         // Handle window resize
         window.addEventListener('resize', () => this.setupCanvas());
+        
+        // Create UI controls
+        this.createPauseButton();
+        this.createMuteButton();
     }
     
     setupCanvas() {
@@ -365,11 +566,28 @@ class Game {
             // Ensure player stays at the bottom of the screen
             this.player.y = this.canvas.height - 100;
         }
+        
+        // Update UI element positions when canvas is resized
+        if (this.pauseButtonX !== undefined) {
+            // Just update positions without adding new event listeners
+            this.pauseButtonX = this.canvas.width - 50;
+            this.pauseButtonY = 70;
+        }
+        if (this.muteButtonX !== undefined) {
+            // Just update positions without adding new event listeners
+            this.muteButtonX = this.canvas.width - 50;
+            this.muteButtonY = 130;
+        }
     }
     
     init() {
         // Load game sprites
         SpriteManager.loadSprites();
+        
+        // Start gameplay music (after a short delay to allow stage transition to finish)
+        setTimeout(() => {
+            SoundManager.playMusic('gameplayMusic');
+        }, 1000);
         
         // Create player
         this.player = new Player(this);
@@ -381,9 +599,6 @@ class Game {
         // Create first level
         this.level = new Level(this);
         this.level.generate(1);
-        
-        // Create pause button
-        this.createPauseButton();
         
         // Start the game loop
         this.isRunning = true;
@@ -408,6 +623,12 @@ class Game {
             if (this.isPointInPauseButton(clickX, clickY)) {
                 this.togglePause();
             }
+            
+            // Note: Mute button clicks are handled in the same listener
+            // to avoid duplicate event handlers
+            if (this.isPointInMuteButton(clickX, clickY) && SoundManager) {
+                SoundManager.toggleMute();
+            }
         });
         
         // Add hover effect for better UX
@@ -417,19 +638,32 @@ class Game {
             const mouseY = event.clientY - rect.top;
             
             this.isPauseButtonHovered = this.isPointInPauseButton(mouseX, mouseY);
+            this.isMuteButtonHovered = this.isPointInMuteButton(mouseX, mouseY);
         });
         
         // For mobile, add touch event
         this.canvas.addEventListener('touchstart', (event) => {
+            event.preventDefault(); // Prevent scrolling/zooming
             const rect = this.canvas.getBoundingClientRect();
             const touchX = event.touches[0].clientX - rect.left;
             const touchY = event.touches[0].clientY - rect.top;
             
             if (this.isPointInPauseButton(touchX, touchY)) {
                 this.togglePause();
-                event.preventDefault(); // Prevent scrolling/zooming
+            }
+            
+            if (this.isPointInMuteButton(touchX, touchY) && SoundManager) {
+                SoundManager.toggleMute();
             }
         });
+    }
+    
+    createMuteButton() {
+        // Set up mute button properties
+        this.muteButtonX = this.canvas.width - 50; // Same X position as pause button
+        this.muteButtonY = 130; // Below the pause button (pause is at 70, plus size 40 + 20 padding)
+        // Note: Event listeners are already set up in createPauseButton
+        // No need to add duplicate listeners here
     }
     
     isPointInPauseButton(x, y) {
@@ -437,6 +671,13 @@ class Game {
                x <= this.pauseButtonX + this.pauseButtonSize/2 && 
                y >= this.pauseButtonY - this.pauseButtonSize/2 && 
                y <= this.pauseButtonY + this.pauseButtonSize/2;
+    }
+    
+    isPointInMuteButton(x, y) {
+        return x >= this.muteButtonX - this.muteButtonSize/2 && 
+               x <= this.muteButtonX + this.muteButtonSize/2 && 
+               y >= this.muteButtonY - this.muteButtonSize/2 && 
+               y <= this.muteButtonY + this.muteButtonSize/2;
     }
     
     drawPauseButton() {
@@ -468,13 +709,90 @@ class Game {
         this.ctx.restore();
     }
     
+    drawMuteButton() {
+        // Draw the mute button on the canvas
+        this.ctx.save();
+        
+        // Draw button background
+        this.ctx.fillStyle = this.isMuteButtonHovered ? 'rgba(80, 80, 80, 0.7)' : 'rgba(40, 40, 40, 0.7)';
+        this.ctx.beginPath();
+        this.ctx.arc(this.muteButtonX, this.muteButtonY, this.muteButtonSize/2, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Draw mute/unmute icon
+        this.ctx.fillStyle = '#ffffff';
+        if (SoundManager && SoundManager.muted) {
+            // Draw muted icon (speaker with slash)
+            // Center the entire icon
+            const offsetX = -2; // Shift slightly left to center the whole icon
+            
+            // Speaker base
+            this.ctx.fillRect(this.muteButtonX + offsetX - 10, this.muteButtonY - 10, 8, 20);
+            
+            // Speaker cone outline
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.muteButtonX + offsetX - 2, this.muteButtonY);
+            this.ctx.lineTo(this.muteButtonX + offsetX + 6, this.muteButtonY - 10);
+            this.ctx.lineTo(this.muteButtonX + offsetX + 6, this.muteButtonY + 10);
+            this.ctx.lineTo(this.muteButtonX + offsetX - 2, this.muteButtonY);
+            this.ctx.fill();
+            
+            // Slash
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.muteButtonX - 10, this.muteButtonY + 10);
+            this.ctx.lineTo(this.muteButtonX + 10, this.muteButtonY - 10);
+            this.ctx.stroke();
+        } else {
+            // Draw unmuted icon (speaker with sound waves)
+            // Center the entire icon
+            const offsetX = -2; // Shift slightly left to center the whole icon
+            
+            // Speaker base
+            this.ctx.fillRect(this.muteButtonX + offsetX - 10, this.muteButtonY - 10, 8, 20);
+            
+            // Speaker cone
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.muteButtonX + offsetX - 2, this.muteButtonY);
+            this.ctx.lineTo(this.muteButtonX + offsetX + 6, this.muteButtonY - 10);
+            this.ctx.lineTo(this.muteButtonX + offsetX + 6, this.muteButtonY + 10);
+            this.ctx.lineTo(this.muteButtonX + offsetX - 2, this.muteButtonY);
+            this.ctx.fill();
+            
+            // Sound waves - centered and sized to match pause button
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(this.muteButtonX + offsetX + 6, this.muteButtonY, 6, -Math.PI/3, Math.PI/3);
+            this.ctx.stroke();
+            this.ctx.beginPath();
+            this.ctx.arc(this.muteButtonX + offsetX + 6, this.muteButtonY, 10, -Math.PI/3, Math.PI/3);
+            this.ctx.stroke();
+        }
+        
+        this.ctx.restore();
+    }
+    
     togglePause() {
         this.isPaused = !this.isPaused;
         
         if (this.isPaused) {
+            // Pause the music
+            if (SoundManager.currentMusic) {
+                SoundManager.music[SoundManager.currentMusic].pause();
+            }
+            
             // Draw the pause screen immediately
             this.drawPauseScreen();
         } else {
+            // Resume the music
+            if (SoundManager.currentMusic) {
+                SoundManager.music[SoundManager.currentMusic].play().catch(error => {
+                    console.warn(`Error resuming music:`, error);
+                });
+            }
+            
             // Resume the game loop
             this.lastTime = performance.now();
             requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
@@ -578,6 +896,13 @@ class Game {
     }
     
     draw() {
+        // Clear the canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Draw the background
+        this.ctx.fillStyle = '#87CEEB'; // Sky blue background
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
         // Draw level
         if (this.level) {
             this.level.draw(this.ctx);
@@ -586,6 +911,11 @@ class Game {
         // Draw all entities
         for (const entity of this.entities) {
             entity.draw(this.ctx);
+        }
+        
+        // Draw the player
+        if (this.player) {
+            this.player.draw(this.ctx);
         }
         
         // Draw UI
@@ -607,6 +937,9 @@ class Game {
         
         // Draw pause button
         this.drawPauseButton();
+        
+        // Draw mute button
+        this.drawMuteButton();
     }
     
     checkCollisions() {
@@ -772,8 +1105,12 @@ class Game {
         console.log('Game Over!');
         this.isRunning = false;
         
-        // Show game over screen
-        // TODO: Implement game over screen
+        // Stop gameplay music and play game over sound
+        SoundManager.stopMusic();
+        SoundManager.playSound('gameOver');
+        
+        // Show game over screen with final score
+        showGameOverScreen(this, this.score);
     }
 }
 
@@ -788,15 +1125,15 @@ class Player {
         this.height = 50;
         this.x = game.canvas.width / 2 - this.width / 2;
         this.y = game.canvas.height - 100;
-        this.speed = 200; // pixels per second
-        this.health = 200;
-        this.maxHealth = 200; // Increased health to give player more survivability
+        this.speed = CONFIG.PLAYER.SPEED;
+        this.health = CONFIG.PLAYER.HEALTH;
+        this.maxHealth = CONFIG.PLAYER.HEALTH; // Use the same value for max health
         this.isDead = false;
         this.direction = { x: 0, y: 0 };
         
         // Invulnerability properties
         this.isInvulnerable = false;
-        this.invulnerabilityDuration = 1.0; // 1 second of invulnerability after collision
+        this.invulnerabilityDuration = CONFIG.PLAYER.INVULNERABILITY_DURATION;
         this.invulnerabilityTimer = 0;
         
         // Damage flash effect properties
@@ -805,10 +1142,10 @@ class Player {
         this.flashTimer = 0;
         
         // Weapon properties
-        this.fireRate = 1.0; // shots per second (doubled from 0.5)
+        this.fireRate = CONFIG.PLAYER.FIRE_RATE;
         this.lastShotTime = 0;
-        this.projectileSpeed = 400;
-        this.projectileDamage = 10;
+        this.projectileSpeed = CONFIG.PLAYER.PROJECTILE_SPEED;
+        this.projectileDamage = CONFIG.PLAYER.PROJECTILE_DAMAGE;
         
         // Store original weapon properties for reverting after power-ups expire
         this.originalFireRate = this.fireRate;
@@ -2685,7 +3022,7 @@ class PowerUp {
         this.game.player.applyPowerUp(this.type);
         
         // Play sound effect
-        // TODO: Add sound effect for power-up collection
+        SoundManager.playSound('powerUp');
         
         // Show visual feedback
         this.showCollectionEffect();
@@ -2981,11 +3318,6 @@ class Level {
         ctx.fillStyle = '#666666';
         ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
         
-        // Add a prominent white border
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 4; // Thicker border for better visibility
-        ctx.strokeRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
-        
         // Add a second inner border for a more defined look
         ctx.strokeStyle = '#AAAAAA';
         ctx.lineWidth = 1;
@@ -2995,6 +3327,35 @@ class Level {
             obstacle.width - 6, 
             obstacle.height - 6
         );
+        
+        // Check if this obstacle has a pre-calculated brick pattern
+        if (obstacle.brickPattern) {
+            // Add brick-like grid pattern
+            ctx.strokeStyle = '#333333';  // Darker color for better visibility
+            ctx.lineWidth = 1.5;  // Thicker lines as requested
+            
+            // Draw vertical lines using pre-calculated offsets
+            const { numVerticals, verticalOffsets } = obstacle.brickPattern;
+            for (let i = 1; i < numVerticals; i++) {
+                const x = obstacle.x + (i * (obstacle.width / numVerticals)) + verticalOffsets[i-1];
+                
+                ctx.beginPath();
+                ctx.moveTo(x, obstacle.y);
+                ctx.lineTo(x, obstacle.y + obstacle.height);
+                ctx.stroke();
+            }
+            
+            // Draw horizontal lines using pre-calculated offsets
+            const { numHorizontals, horizontalOffsets } = obstacle.brickPattern;
+            for (let i = 1; i < numHorizontals; i++) {
+                const y = obstacle.y + (i * (obstacle.height / numHorizontals)) + horizontalOffsets[i-1];
+                
+                ctx.beginPath();
+                ctx.moveTo(obstacle.x, y);
+                ctx.lineTo(obstacle.x + obstacle.width, y);
+                ctx.stroke();
+            }
+        }
     }
     
     // The drawPowerUp method has been removed as power-ups now draw themselves
@@ -3112,11 +3473,31 @@ class Level {
                 const width = 30 + Math.random() * 50;
                 const height = 20 + Math.random() * 30;
                 
+                // Generate brick pattern data once during obstacle creation
+                const numVerticals = Math.max(2, Math.floor(width / 15));
+                const numHorizontals = Math.max(2, Math.floor(height / 12));
+                
+                const verticalOffsets = [];
+                for (let i = 1; i < numVerticals; i++) {
+                    verticalOffsets.push((Math.random() * 4) - 2); // -2 to +2 pixels
+                }
+                
+                const horizontalOffsets = [];
+                for (let i = 1; i < numHorizontals; i++) {
+                    horizontalOffsets.push((Math.random() * 4) - 2); // -2 to +2 pixels
+                }
+                
                 newObstacle = {
                     x,
                     y,
                     width,
-                    height
+                    height,
+                    brickPattern: {
+                        numVerticals,
+                        numHorizontals,
+                        verticalOffsets,
+                        horizontalOffsets
+                    }
                 };
                 
                 // Check if this position is valid (not too close to other obstacles or player safe zone)
@@ -3453,6 +3834,9 @@ class Level {
     }
     
     showLevelCompleteMessage() {
+        // Play stage transition sound effect
+        SoundManager.playSound('stageTransition');
+        
         // Create level complete overlay
         const overlay = document.createElement('div');
         overlay.id = 'level-complete-overlay';
@@ -3517,14 +3901,23 @@ class Level {
  * @returns {HTMLElement} - The created overlay element
  */
 function createGameOverlay(options) {
-    // Create overlay container
+    // Create overlay container that fits exactly over the game canvas
+    const gameCanvas = document.getElementById('game-canvas');
+    const gameContainer = document.getElementById('game-container');
+    
+    // Get the canvas position relative to its container
+    const canvasRect = gameCanvas.getBoundingClientRect();
+    const containerRect = gameContainer.getBoundingClientRect();
+    const relativeTop = canvasRect.top - containerRect.top;
+    const relativeLeft = canvasRect.left - containerRect.left;
+    
     const overlay = document.createElement('div');
     overlay.id = options.id;
     overlay.style.position = 'absolute';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100%';
-    overlay.style.height = '100%';
+    overlay.style.top = relativeTop + 'px';
+    overlay.style.left = relativeLeft + 'px';
+    overlay.style.width = gameCanvas ? gameCanvas.width + 'px' : '100%';
+    overlay.style.height = gameCanvas ? gameCanvas.height + 'px' : '100%';
     overlay.style.display = 'flex';
     overlay.style.flexDirection = 'column';
     overlay.style.justifyContent = 'center';
@@ -3532,15 +3925,32 @@ function createGameOverlay(options) {
     overlay.style.backgroundColor = options.backgroundColor || 'rgba(0, 0, 0, 0.7)';
     overlay.style.zIndex = '10';
     
+    // Create a content container with appropriate sizing
+    const contentContainer = document.createElement('div');
+    contentContainer.style.width = '80%';
+    contentContainer.style.maxWidth = '400px';
+    contentContainer.style.padding = '20px';
+    contentContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    contentContainer.style.borderRadius = '10px';
+    contentContainer.style.border = '2px solid #ffcc00';
+    contentContainer.style.boxShadow = '0 0 20px rgba(255, 204, 0, 0.3)';
+    contentContainer.style.display = 'flex';
+    contentContainer.style.flexDirection = 'column';
+    contentContainer.style.alignItems = 'center';
+    contentContainer.style.textAlign = 'center';
+    overlay.appendChild(contentContainer);
+    
     // Create title
     const title = document.createElement('h1');
     title.textContent = options.title;
     title.style.color = options.titleColor;
     title.style.fontFamily = 'Arial, sans-serif';
-    title.style.fontSize = '36px';
+    title.style.fontSize = 'min(36px, 7vw)';
     title.style.marginBottom = '20px';
     title.style.textShadow = '2px 2px 4px #000';
-    overlay.appendChild(title);
+    title.style.maxWidth = '100%';
+    title.style.wordWrap = 'break-word';
+    contentContainer.appendChild(title);
     
     // Create subtitle if provided
     if (options.subtitle) {
@@ -3548,9 +3958,24 @@ function createGameOverlay(options) {
         subtitle.textContent = options.subtitle;
         subtitle.style.color = options.subtitleColor || '#fff';
         subtitle.style.fontFamily = 'Arial, sans-serif';
-        subtitle.style.fontSize = '18px';
-        subtitle.style.marginBottom = '40px';
-        overlay.appendChild(subtitle);
+        subtitle.style.fontSize = 'min(18px, 4vw)';
+        subtitle.style.marginBottom = '20px';
+        subtitle.style.maxWidth = '100%';
+        subtitle.style.wordWrap = 'break-word';
+        subtitle.style.lineHeight = '1.5';
+        contentContainer.appendChild(subtitle);
+    }
+    
+    // Create image if provided
+    if (options.image) {
+        const img = document.createElement('img');
+        img.src = options.image;
+        img.style.maxWidth = options.imageWidth || '200px';
+        img.style.maxHeight = options.imageHeight || 'auto';
+        img.style.marginBottom = '30px';
+        img.style.borderRadius = options.imageRounded ? '10px' : '0';
+        img.style.boxShadow = options.imageShadow ? '0 4px 8px rgba(0, 0, 0, 0.5)' : 'none';
+        contentContainer.appendChild(img);
     }
     
     // Create buttons if provided
@@ -3558,8 +3983,8 @@ function createGameOverlay(options) {
         options.buttons.forEach(buttonConfig => {
             const button = document.createElement('button');
             button.textContent = buttonConfig.text;
-            button.style.padding = '15px 30px';
-            button.style.fontSize = '20px';
+            button.style.padding = 'min(15px, 3vw) min(30px, 6vw)';
+            button.style.fontSize = 'min(20px, 4vw)';
             button.style.backgroundColor = buttonConfig.bgColor || '#ffcc00';
             button.style.color = '#000';
             button.style.border = 'none';
@@ -3568,6 +3993,7 @@ function createGameOverlay(options) {
             button.style.fontWeight = 'bold';
             button.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.3)';
             button.style.marginBottom = '10px';
+            button.style.transition = 'all 0.2s ease';
             
             // Add hover effects
             button.addEventListener('mouseover', () => {
@@ -3583,7 +4009,7 @@ function createGameOverlay(options) {
             // Add click handler
             button.addEventListener('click', buttonConfig.onClick);
             
-            overlay.appendChild(button);
+            contentContainer.appendChild(button);
         });
     }
     
@@ -3602,6 +4028,9 @@ window.createGameOverlay = createGameOverlay;
 
 // Wait for DOM to be fully loaded before initializing
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize sound manager
+    SoundManager.init();
+    
     // Create game instance
     const game = new Game('game-canvas');
     
@@ -3613,28 +4042,113 @@ document.addEventListener('DOMContentLoaded', () => {
  * Shows the start screen with game title and start button
  */
 function showStartScreen(game) {
-    // Use the reusable overlay function to create the start screen
-    const startScreen = createGameOverlay({
-        id: 'start-screen',
-        title: 'CHICKEN SHOOTER',
-        titleColor: '#ffcc00',
-        subtitle: 'Escape from the Farm Lab!',
-        subtitleColor: '#fff',
-        buttons: [
-            {
-                text: 'START GAME',
-                bgColor: '#ffcc00',
-                hoverColor: '#ffd700',
-                onClick: () => {
-                    // Remove start screen
-                    document.getElementById('game-container').removeChild(startScreen);
-                    
-                    // Initialize and start the game
-                    game.init();
-                }
-            }
-        ]
-    });
+    // Create a simple overlay div for the start screen (similar to a7fl-return approach)
+    const startScreen = document.createElement('div');
+    startScreen.id = 'start-screen';
+    startScreen.style.position = 'absolute';
+    startScreen.style.top = '0';
+    startScreen.style.left = '0';
+    startScreen.style.right = '0';
+    startScreen.style.bottom = '0';
+    startScreen.style.display = 'flex';
+    startScreen.style.justifyContent = 'center';
+    startScreen.style.alignItems = 'center';
+    startScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    startScreen.style.zIndex = '10';
+    
+    // Create a content box with fixed dimensions
+    const contentBox = document.createElement('div');
+    contentBox.style.width = '300px';
+    contentBox.style.maxWidth = '80%';
+    contentBox.style.padding = '25px';
+    contentBox.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    contentBox.style.borderRadius = '10px';
+    contentBox.style.border = '2px solid #ffcc00';
+    contentBox.style.boxShadow = '0 0 20px rgba(255, 204, 0, 0.3)';
+    contentBox.style.textAlign = 'center';
+    
+    // Create title
+    const title = document.createElement('h1');
+    title.textContent = 'WHY DID THE CHICKEN';
+    title.style.color = '#ffcc00';
+    title.style.fontFamily = 'Arial, sans-serif';
+    title.style.fontSize = '24px';
+    title.style.marginBottom = '15px';
+    title.style.lineHeight = '1.2';
+    contentBox.appendChild(title);
+    
+    // Create subtitle
+    const subtitle = document.createElement('p');
+    subtitle.textContent = "Help the chicken take down the mad scientist's lab and all the enemies in it";
+    subtitle.style.color = '#fff';
+    subtitle.style.fontFamily = 'Arial, sans-serif';
+    subtitle.style.fontSize = '16px';
+    subtitle.style.marginBottom = '20px';
+    subtitle.style.lineHeight = '1.4';
+    contentBox.appendChild(subtitle);
+    
+    // Add chicken image
+    const image = document.createElement('img');
+    image.src = ENV.getSpriteUrl('chicken-passive');
+    image.style.width = '150px';
+    image.style.height = 'auto';
+    image.style.marginBottom = '20px';
+    contentBox.appendChild(image);
+    
+    // Create start button
+    const startButton = document.createElement('button');
+    startButton.textContent = 'START GAME';
+    startButton.style.backgroundColor = '#ffcc00';
+    startButton.style.color = '#000';
+    startButton.style.border = 'none';
+    startButton.style.padding = '10px 20px';
+    startButton.style.fontSize = '18px';
+    startButton.style.borderRadius = '5px';
+    startButton.style.cursor = 'pointer';
+    startButton.style.fontWeight = 'bold';
+    startButton.style.marginTop = '10px';
+    
+    // Add hover effect
+    startButton.onmouseover = () => {
+        startButton.style.backgroundColor = '#ffd700';
+    };
+    startButton.onmouseout = () => {
+        startButton.style.backgroundColor = '#ffcc00';
+    };
+    
+    // Add click handler
+    startButton.onclick = () => {
+        // Play start game sound
+        SoundManager.playSound('startGame');
+        
+        // Remove start screen
+        document.getElementById('game-container').removeChild(startScreen);
+        
+        // Add a small delay to let the start sound play before game music starts
+        setTimeout(() => {
+            // Initialize and start the game
+            game.init();
+        }, 500); // 500ms delay
+    };
+    
+    contentBox.appendChild(startButton);
+    
+    // Add music credits
+    const creditsDivider = document.createElement('hr');
+    creditsDivider.style.margin = '20px auto 15px';
+    creditsDivider.style.width = '80%';
+    creditsDivider.style.border = '0.5px solid rgba(255, 255, 255, 0.3)';
+    contentBox.appendChild(creditsDivider);
+    
+    const musicCredits = document.createElement('div');
+    musicCredits.style.fontSize = '10px';
+    musicCredits.style.color = 'rgba(255, 255, 255, 0.7)';
+    musicCredits.style.lineHeight = '1.4';
+    musicCredits.style.textAlign = 'center';
+    musicCredits.innerHTML = 'Soundtrack: "Voxel Revolution" Kevin MacLeod (incompetech.com)<br>Licensed under Creative Commons: By Attribution 4.0 License<br><a href="http://creativecommons.org/licenses/by/4.0/" style="color: rgba(255, 204, 0, 0.8);" target="_blank">creativecommons.org/licenses/by/4.0/</a>';
+    contentBox.appendChild(musicCredits);
+    
+    startScreen.appendChild(contentBox);
     
     // Add start screen to game container
     document.getElementById('game-container').appendChild(startScreen);
@@ -3644,6 +4158,12 @@ function showStartScreen(game) {
  * Shows the game over screen with score and restart button
  */
 function showGameOverScreen(game, score) {
+    // Remove any existing game over screen
+    const existingGameOver = document.getElementById('game-over-screen');
+    if (existingGameOver) {
+        document.getElementById('game-container').removeChild(existingGameOver);
+    }
+    
     // Use the reusable overlay function to create the game over screen
     const gameOverScreen = createGameOverlay({
         id: 'game-over-screen',
@@ -3673,14 +4193,7 @@ function showGameOverScreen(game, score) {
     document.getElementById('game-container').appendChild(gameOverScreen);
 }
 
-// Extend the Game class to handle game over
-Game.prototype.gameOver = function() {
-    console.log('Game Over!');
-    this.isRunning = false;
-    
-    // Show game over screen with final score
-    showGameOverScreen(this, this.score);
-};
+// Game over screen is shown by the Game.gameOver() method in game.js
 
 
 </script>
